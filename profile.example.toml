@@ -33,3 +33,9 @@ label = "Kunde ACME"
 description = "Projekt Datenplattform"
 domains = ["acme.example"]
 keywords = ["acme", "datenplattform"]
+# Stresslevel des Projekts: "niedrig", "mittel" oder "hoch". Ab "mittel" schlaegt
+# der Kalender-Agent vor, interne Termin-Bloecke zu verschieben.
+stress = "mittel"
+# Tage beim Kunden: Interne Termine an diesen Tagen schlaegt der Agent immer
+# zum Verschieben vor.
+onsite_days = ["Mi"]

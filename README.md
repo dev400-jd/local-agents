@@ -12,6 +12,7 @@ und Modellerfahrungen stehen im Schwesterprojekt `opencode-ollama-agents`
 | Terminquelle | `local_agents/calendar_events.py` | liest Termine über EventKit |
 | Profil | `local_agents/profile.py` | gemeinsames Gedächtnis: Person, Arbeitsort, Arbeitskontexte |
 | Feiertage | `local_agents/holidays.py` | gesetzliche Feiertage je Bundesland |
+| Planung | `local_agents/planning.py` | Verschiebevorschläge für interne Termine |
 
 ## Einrichtung
 
@@ -138,9 +139,12 @@ Felder der Datei:
 | `[[contexts]]` `label`, `description` | Anzeigename und Erläuterung, z. B. das Projekt |
 | `[[contexts]]` `domains` | Mail-Domains, die zu diesem Kontext gehören |
 | `[[contexts]]` `keywords` | Stichwörter im Titel, Groß-/Kleinschreibung egal |
+| `[[contexts]]` `stress` | nur Kunden: Stresslevel des Projekts, `niedrig`, `mittel` oder `hoch` |
+| `[[contexts]]` `onsite_days` | nur Kunden: Tage beim Kunden, z. B. `["Mi"]` oder `["Mittwoch", "Fr"]` |
 
 Eine fehlerhafte Datei (unbekanntes Bundesland, falsches `kind`, doppelte `id`)
-bricht den Lauf mit einer Meldung ab.
+bricht den Lauf mit einer Meldung ab. Das gilt auch für ein unbekanntes
+Stresslevel oder einen unbekannten Wochentag.
 
 Jeder Agent kann das Profil auf zwei Arten nutzen:
 
@@ -185,9 +189,9 @@ oder „Holiday" enthält.
 
 Feiertage, die am Arbeitsort gelten, bleiben stehen und sind als
 `gesetzlicher Feiertag in Hessen, arbeitsfrei` markiert. Liegen an so einem Tag
-Termine, liefert das Werkzeug einen fertig formulierten Hinweis, den das Modell
-übernimmt: „Do 04.06.: Fronleichnam ist in Hessen gesetzlicher Feiertag
-(arbeitsfrei), trotzdem 2 Termine eingetragen."
+Termine, steht unter der Zusammenfassung ein Feiertagshinweis: „Do 04.06.:
+Fronleichnam ist in Hessen gesetzlicher Feiertag (arbeitsfrei), trotzdem 2
+Termine eingetragen."
 
 `local_agents/holidays.py` berechnet die Feiertage je Bundesland ohne Netz.
 Feiertage, die nur in einzelnen Gemeinden gelten, sind vereinfacht: Mariä
@@ -195,6 +199,49 @@ Himmelfahrt zählt für ganz Bayern, Fronleichnam nicht für Sachsen und
 Thüringen, das Augsburger Friedensfest gar nicht. Führen zwei
 Feiertagskalender denselben Tag, erscheint der Feiertag nur einmal. Ohne
 `state` bleiben alle Einträge sichtbar, mit dem Vermerk, wo sie gelten.
+
+### Stresslevel und Kundentag: Verschiebevorschläge
+
+Unter der Zusammenfassung nennt der Kalender-Agent interne Termine, die dem
+Kundenprojekt weichen könnten. Zwei Angaben im Kundenkontext steuern das:
+
+```toml
+[[contexts]]
+id = "kunde-acme"
+kind = "kunde"
+stress = "mittel"       # niedrig, mittel oder hoch
+onsite_days = ["Mi"]    # Tage beim Kunden
+```
+
+- **Kundentag (`onsite_days`):** Alle internen Termine an diesem Wochentag
+  werden zum Verschieben vorgeschlagen, unabhängig vom Stresslevel.
+- **Stresslevel (`stress`):** An den übrigen Tagen zählen interne Blöcke, also
+  interne Termine am Stück mit höchstens 30 Minuten Pause dazwischen.
+
+| `stress` | Vorschlag an Tagen ohne Kundentag |
+|---|---|
+| `niedrig` oder leer | keiner |
+| `mittel` | Blöcke aus mindestens 2 Terminen, die zusammen mindestens 2 Stunden belegen |
+| `hoch` | jeder Block ab 1 Stunde, auch ein einzelner Termin |
+
+Bei mehreren Kunden gilt das höchste Stresslevel. Termine mit mehr als 10
+Eingeladenen sind als „große Runde, eher aussetzen" markiert, weil man sie kaum
+selbst verschieben kann. Doppelt eingetragene Termine erscheinen einmal.
+Kundentermine werden nie vorgeschlagen, und bei einer Frage nur nach
+Kundenterminen entfällt der Abschnitt. Beispiel:
+
+```text
+**Verschiebevorschläge**
+- Mi 18.11. ist Kundentag (Kunde ACME), 2 interne Termine verschieben:
+  - 10:15-11:00 Brainstorming
+  - 12:45-14:00 Firmenrunde (große Runde mit 80 Eingeladenen, eher aussetzen)
+- Do 19.11.: interner Block 09:00-11:00 (2 interne Termine, 120 Min) verschieben, weil das Stresslevel bei Kunde ACME mittel ist:
+  - 09:00-10:00 Team
+  - 10:15-11:00 Planung
+```
+
+Die Schwellen stehen in `BLOCK_RULES`, `MAX_GAP` und `LARGE_ROUND` in
+`local_agents/planning.py`.
 
 Von den Beteiligten liest der Agent nur die Mail-Domains, keine Namen. Ein
 neuer Kunde ist ein weiterer `[[contexts]]`-Block im Profil.
@@ -207,9 +254,12 @@ Beide Agenten laufen mit niedrigem Reasoning-Aufwand (`MODEL_SETTINGS` in
 31–61 s statt rund 18 s.
 
 Was verlässlich sein muss, entscheidet der Code und nicht das Modell:
-Zeitraum der nächsten Woche, Zuordnung zu Kontexten, Auswahl der Feiertage und
-der Wortlaut der Feiertagshinweise. Das Modell formuliert nur die
-Zusammenfassung; deren Aufbau (Liste oder Tabelle) schwankt von Lauf zu Lauf.
+Zeitraum der nächsten Woche, Zuordnung zu Kontexten und Auswahl der Feiertage.
+Feiertagshinweise und Verschiebevorschläge formuliert der Code und druckt sie
+unverändert unter die Antwort; das Modell bekommt sie gar nicht zu sehen, weil
+es sie beim Wiedergeben veränderte (z. B. „eher aussetzen" an einem falschen
+Termin). Das Modell formuliert nur die Zusammenfassung; deren Aufbau (Liste
+oder Tabelle) schwankt von Lauf zu Lauf.
 
 ## Stand
 
@@ -225,3 +275,6 @@ Zusammenfassung; deren Aufbau (Liste oder Tabelle) schwankt von Lauf zu Lauf.
   zu Kundenterminen machten.
 - Feiertage je Bundesland gegen `gpt-oss:20b`: Für Hessen erscheinen Buß- und
   Bettag und Totensonntag nicht mehr (2026-11-14, 4 Läufe).
+- Verschiebevorschläge gegen `gpt-oss:20b`: erscheinen wortgleich unter der
+  Zusammenfassung (2026-11-14, 2 Läufe). Ob die Schwellen im Alltag passen, ist
+  noch nicht erprobt.

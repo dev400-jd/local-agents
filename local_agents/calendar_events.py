@@ -9,8 +9,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 
+from local_agents.holidays import WEEKDAYS
+
 MAX_LOCATION_CHARS = 60
-WEEKDAYS = ("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So")
 
 
 class CalendarAccessError(RuntimeError):

@@ -13,7 +13,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from local_agents.holidays import STATES
+from local_agents.holidays import STATES, WEEKDAYS
 
 DEFAULT_PROFILE_PATH = Path.home() / ".config" / "local-agents" / "profile.toml"
 
@@ -22,6 +22,8 @@ CUSTOMER = "kunde"
 # Feste Kontexte fuer alles, was das Profil nicht abdeckt.
 EXTERNAL_UNKNOWN = "extern"  # fremde Domains, die keinem Kontext zugeordnet sind
 OTHER = "sonstig"  # ohne Teilnehmer: Feiertage, Blocker, Privates
+# Wie stark ein Kundenprojekt gerade beansprucht, aufsteigend.
+STRESS_LEVELS = ("niedrig", "mittel", "hoch")
 
 
 class ProfileError(ValueError):
@@ -38,6 +40,10 @@ class Context:
     description: str = ""
     domains: frozenset[str] = frozenset()
     keywords: tuple[str, ...] = ()
+    # Nur fuer Kunden: Stresslevel des Projekts (STRESS_LEVELS, leer = niedrig)
+    # und Wochentage beim Kunden (0 = Montag), an denen Internes weichen soll.
+    stress: str = ""
+    onsite_days: frozenset[int] = frozenset()
 
     def has_keyword(self, text: str) -> bool:
         lowered = text.casefold()
@@ -124,10 +130,24 @@ class Profile:
             lines.append("Seine Arbeitskontexte (id: Bedeutung):")
             for context in self.contexts:
                 detail = f" - {context.description}" if context.description else ""
+                if context.stress:
+                    detail += f"; Stresslevel {context.stress}"
+                if context.onsite_days:
+                    days = ", ".join(WEEKDAYS[day] for day in sorted(context.onsite_days))
+                    detail += f"; Kundentag {days}"
                 lines.append(f"- {context.id}: {context.label}{detail}")
             lines.append(f"- {EXTERNAL_UNKNOWN}: andere externe Beteiligte, noch nicht zugeordnet")
             lines.append(f"- {OTHER}: ohne Beteiligte, z. B. Feiertage und Blocker")
         return "\n".join(lines)
+
+
+def _weekday(path: Path, name: str) -> int:
+    """Wochentag aus "Mi" oder "Mittwoch" als Zahl, 0 = Montag."""
+    short = name.strip().casefold()[:2]
+    for index, weekday in enumerate(WEEKDAYS):
+        if short == weekday.casefold():
+            return index
+    raise ProfileError(f"{path}: unbekannter Wochentag {name!r}. Erlaubt: {', '.join(WEEKDAYS)}.")
 
 
 def profile_path() -> Path:
@@ -154,9 +174,15 @@ def load_profile(path: Path | None = None) -> Profile:
                 description=raw.get("description", ""),
                 domains=frozenset(d.casefold() for d in raw.get("domains", [])),
                 keywords=tuple(k.casefold() for k in raw.get("keywords", [])),
+                stress=raw.get("stress", "").casefold(),
+                onsite_days=frozenset(_weekday(path, d) for d in raw.get("onsite_days", [])),
             )
         except KeyError as exc:
             raise ProfileError(f"{path}: Kontext ohne Feld {exc}.") from exc
+        if context.stress and context.stress not in STRESS_LEVELS:
+            raise ProfileError(
+                f"{path}: stress von {context.id} muss {', '.join(STRESS_LEVELS)} sein."
+            )
         if context.kind not in (INTERNAL, CUSTOMER):
             raise ProfileError(f"{path}: kind von {context.id} muss intern oder kunde sein.")
         if context.id in (EXTERNAL_UNKNOWN, OTHER) or context.id in [c.id for c in contexts]:

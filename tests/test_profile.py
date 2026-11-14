@@ -127,6 +127,17 @@ class TestLoadProfile(unittest.TestCase):
         with self.assertRaises(ProfileError):
             load_profile(self.write('[person]\nstate = "Hessen"\n'))
 
+    def test_loads_stress_and_customer_days(self) -> None:
+        text = '[[contexts]]\nid = "k"\nkind = "kunde"\nstress = "Hoch"\nonsite_days = ["Mi", "freitag"]\n'
+        context = load_profile(self.write(text)).contexts[0]
+        self.assertEqual((context.stress, context.onsite_days), ("hoch", frozenset({2, 4})))
+        self.assertIn("Stresslevel hoch; Kundentag Mi, Fr", load_profile(self.write(text)).describe())
+
+    def test_rejects_unknown_stress_and_weekday(self) -> None:
+        for field in ('stress = "extrem"', 'onsite_days = ["Xy"]'):
+            with self.assertRaises(ProfileError):
+                load_profile(self.write(f'[[contexts]]\nid = "k"\nkind = "kunde"\n{field}\n'))
+
     def test_rejects_unknown_kind(self) -> None:
         with self.assertRaises(ProfileError):
             load_profile(self.write('[[contexts]]\nid = "x"\nkind = "privat"\n'))

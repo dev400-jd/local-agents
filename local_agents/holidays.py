@@ -31,6 +31,7 @@ STATES = {
     "TH": "Thueringen",
 }
 ALL_STATES = frozenset(STATES)
+WEEKDAYS = ("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So")
 
 
 def easter_sunday(year: int) -> date:

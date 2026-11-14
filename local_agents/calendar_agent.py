@@ -15,15 +15,15 @@ from pydantic_ai import Agent, ModelRetry, RunContext
 
 from local_agents.agent import MODEL_SETTINGS, ollama_model
 from local_agents.calendar_events import (
-    WEEKDAYS,
     CalendarAccessError,
     Event,
     fetch_events,
     format_events,
     next_week,
 )
-from local_agents.holidays import STATES, holiday_note, is_public_holiday
-from local_agents.profile import Profile, ProfileError, load_profile
+from local_agents.holidays import STATES, WEEKDAYS, holiday_note, is_public_holiday
+from local_agents.planning import move_suggestions
+from local_agents.profile import INTERNAL, Profile, ProfileError, load_profile
 
 DEFAULT_QUESTION = "Fasse meine naechste Woche zusammen."
 # Kontextbudget ist 16K: Terminliste und Zeitraum werden begrenzt.
@@ -40,6 +40,9 @@ class CalendarDeps:
     today: date
     profile: Profile = field(default_factory=Profile)
     fetch: Callable[[date, date], list[Event]] = fetch_events
+    # Vom Code formulierte Abschnitte (Ueberschrift -> Zeilen), die unveraendert
+    # unter die Antwort des Modells gehoeren. list_events fuellt sie.
+    notes: dict[str, list[str]] = field(default_factory=dict)
 
 
 calendar_agent = Agent(
@@ -96,8 +99,16 @@ def list_events(
         return profile.classify(event.title, event.organizer_domain, event.attendee_domains)
 
     events = relevant_events(ctx.deps.fetch(start, end), profile.state)
+    # Vorschlaege betreffen interne Termine; bei einem Kundenfilter entfallen sie.
+    internal_ids = {c.id for c in profile.contexts if c.kind == INTERNAL}
+    suggestions = (
+        move_suggestions(events, profile, context_of)
+        if context == ALL_CONTEXTS or context in internal_ids
+        else []
+    )
     if context != ALL_CONTEXTS:
         events = [event for event in events if context_of(event) == context]
+
     def tag(event: Event) -> str:
         # Eintraege aus Feiertagskalendern gelten oft nur in einzelnen Bundeslaendern.
         if is_holiday_entry(event):
@@ -105,19 +116,27 @@ def list_events(
         # Ohne Kontexte im Profil gibt es nichts zu unterscheiden.
         return profile.label(context_of(event)) if profile.contexts else ""
 
-    text = format_events(events, MAX_EVENT_CHARS, tag=tag)
-    hints = holiday_hints(events, profile.state)
-    if hints:
-        text += "\n\nFeiertagshinweise (am Ende woertlich wiedergeben):\n" + "\n".join(hints)
-    return text
+    # Hinweise gehen am Modell vorbei: Es gab sie sonst veraendert wieder.
+    for heading, lines in (
+        ("Feiertagshinweise", holiday_hints(events, profile.state)),
+        ("Verschiebevorschläge", suggestions),
+    ):
+        known = ctx.deps.notes.setdefault(heading, [])
+        known.extend(line for line in lines if line not in known)
+    return format_events(events, MAX_EVENT_CHARS, tag=tag)
+
+
+def answer(question: str, deps: CalendarDeps, model) -> str:
+    """Antwort des Modells, gefolgt von den Abschnitten, die der Code formuliert."""
+    output = calendar_agent.run_sync(question, model=model, deps=deps).output.rstrip()
+    for heading, lines in deps.notes.items():
+        if lines:
+            output += f"\n\n**{heading}**\n" + "\n".join(lines)
+    return output
 
 
 def holiday_hints(events: list[Event], state: str) -> list[str]:
-    """Fertig formulierte Hinweise auf Termine an arbeitsfreien Feiertagen.
-
-    Der Code formuliert sie, weil das Modell solche Aussagen sonst
-    gelegentlich verdreht.
-    """
+    """Fertig formulierte Hinweise auf Termine an arbeitsfreien Feiertagen."""
     hints = []
     for event in events:
         day = event.start.date()
@@ -168,11 +187,11 @@ def main(argv: list[str]) -> int:
     question = argv[1] if len(argv) == 2 else DEFAULT_QUESTION
     try:
         deps = CalendarDeps(today=date.today(), profile=load_profile())
-        result = calendar_agent.run_sync(question, model=ollama_model(), deps=deps)
+        output = answer(question, deps, ollama_model())
     except (CalendarAccessError, ProfileError) as exc:
         print(exc, file=sys.stderr)
         return 1
-    print(result.output)
+    print(output)
     return 0
 
 

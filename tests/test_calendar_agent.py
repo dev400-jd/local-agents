@@ -1,5 +1,6 @@
 """Tests des Kalender-Agenten ohne Ollama und ohne echten Kalender."""
 
+import dataclasses
 import unittest
 from datetime import date, datetime
 
@@ -7,7 +8,7 @@ from pydantic_ai import models
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from local_agents.calendar_agent import MAX_RANGE_DAYS, CalendarDeps, calendar_agent
+from local_agents.calendar_agent import MAX_RANGE_DAYS, CalendarDeps, answer, calendar_agent
 from local_agents.calendar_events import Event, format_events, next_week
 from local_agents.profile import Context, Profile
 
@@ -96,7 +97,7 @@ class TestCalendarAgent(unittest.TestCase):
     def run_agent(self, start: str, end: str, profile: Profile = Profile(), **extra: str) -> str:
         deps = CalendarDeps(today=date(2026, 11, 14), profile=profile, fetch=self.fetch)
         model = scripted_model(start, end, **extra)
-        return calendar_agent.run_sync("Frage", model=model, deps=deps).output
+        return answer("Frage", deps, model)
 
     def test_lists_events_for_range(self) -> None:
         output = self.run_agent("2026-11-16", "2026-11-22")
@@ -151,9 +152,11 @@ class TestCalendarAgent(unittest.TestCase):
         ]
         output = self.run_agent("2026-06-01", "2026-06-07", profile=Profile(state="HE"))
         self.assertIn("[gesetzlicher Feiertag in Hessen, arbeitsfrei] Fronleichnam", output)
-        self.assertIn(
-            "- Do 04.06.: Fronleichnam ist in Hessen gesetzlicher Feiertag (arbeitsfrei), "
-            "trotzdem 1 Termin eingetragen.",
+        self.assertTrue(
+            output.endswith(
+                "\n\n**Feiertagshinweise**\n- Do 04.06.: Fronleichnam ist in Hessen "
+                "gesetzlicher Feiertag (arbeitsfrei), trotzdem 1 Termin eingetragen."
+            ),
             output,
         )
 
@@ -175,6 +178,29 @@ class TestCalendarAgent(unittest.TestCase):
     def test_all_day_event_outside_holiday_calendar_keeps_context(self) -> None:
         output = self.run_agent("2026-11-16", "2026-11-22", profile=Profile(state="HE"))
         self.assertIn("ganztaegig Urlaub", output)
+
+    def onsite_profile(self) -> Profile:
+        # Di ist Kundentag; der interne Termin "Standup" liegt am Di 17.11.
+        customer = dataclasses.replace(PROFILE.contexts[1], stress="hoch", onsite_days=frozenset({1}))
+        return Profile(contexts=(PROFILE.contexts[0], customer))
+
+    def test_appends_move_suggestions(self) -> None:
+        output = self.run_agent("2026-11-16", "2026-11-22", profile=self.onsite_profile())
+        self.assertTrue(output.startswith("TERMINE: "), output)
+        self.assertIn(
+            "\n\n**Verschiebevorschläge**\n"
+            "- Di 17.11. ist Kundentag (Kunde ACME), 1 interner Termin verschieben:\n"
+            "  - 09:00-10:00 Standup",
+            output,
+        )
+        # Das Modell bekommt die Vorschlaege nicht zu sehen, nur der Nutzer.
+        self.assertEqual(output.count("Verschiebevorschläge"), 1)
+
+    def test_no_move_suggestions_when_filtering_for_customer(self) -> None:
+        output = self.run_agent(
+            "2026-11-16", "2026-11-22", profile=self.onsite_profile(), context="kunde-acme"
+        )
+        self.assertNotIn("Verschiebevorschläge", output)
 
     def test_filters_by_context(self) -> None:
         output = self.run_agent("2026-11-16", "2026-11-22", profile=PROFILE, context="kunde-acme")
