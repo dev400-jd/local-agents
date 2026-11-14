@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "local-agents"
+version = "0.1.0"
+description = "Eigene Agenten mit Pydantic AI und lokalem Ollama-Modell"
+requires-python = ">=3.11"
+dependencies = ["pydantic-ai-slim[openai]>=2.68"]
+
+[tool.setuptools]
+packages = ["local_agents"]
