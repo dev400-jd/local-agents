@@ -9,5 +9,8 @@ description = "Eigene Agenten mit Pydantic AI und lokalem Ollama-Modell"
 requires-python = ">=3.11"
 dependencies = ["pydantic-ai-slim[openai]>=2.68"]
 
+[project.optional-dependencies]
+calendar = ["pyobjc-framework-EventKit>=13.0; sys_platform == 'darwin'"]
+
 [tool.setuptools]
 packages = ["local_agents"]
