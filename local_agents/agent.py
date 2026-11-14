@@ -41,6 +41,20 @@ def ollama_model() -> OpenAIChatModel:
     return OpenAIChatModel(MODEL_NAME, provider=OllamaProvider(base_url=OLLAMA_BASE_URL))
 
 
+def answer_with_notes(agent: Agent, question: str, deps, model) -> str:
+    """Antwort des Modells, gefolgt von den Abschnitten in ``deps.notes``.
+
+    ``deps.notes`` (Ueberschrift -> Zeilen) fuellen die Werkzeuge mit Text, den
+    der Code formuliert. Er geht am Modell vorbei, weil kleine Modelle Listen
+    beim Wiedergeben veraendern.
+    """
+    output = agent.run_sync(question, model=model, deps=deps).output.rstrip()
+    for heading, lines in deps.notes.items():
+        if lines:
+            output += f"\n\n**{heading}**\n" + "\n".join(lines)
+    return output
+
+
 agent = Agent(
     deps_type=Deps,
     instructions=INSTRUCTIONS,

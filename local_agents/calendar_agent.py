@@ -13,7 +13,7 @@ from datetime import date
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 
-from local_agents.agent import MODEL_SETTINGS, ollama_model
+from local_agents.agent import MODEL_SETTINGS, answer_with_notes, ollama_model
 from local_agents.calendar_events import (
     CalendarAccessError,
     Event,
@@ -128,11 +128,7 @@ def list_events(
 
 def answer(question: str, deps: CalendarDeps, model) -> str:
     """Antwort des Modells, gefolgt von den Abschnitten, die der Code formuliert."""
-    output = calendar_agent.run_sync(question, model=model, deps=deps).output.rstrip()
-    for heading, lines in deps.notes.items():
-        if lines:
-            output += f"\n\n**{heading}**\n" + "\n".join(lines)
-    return output
+    return answer_with_notes(calendar_agent, question, deps, model)
 
 
 def holiday_hints(events: list[Event], state: str) -> list[str]:

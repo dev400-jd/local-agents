@@ -13,6 +13,8 @@ und Modellerfahrungen stehen im Schwesterprojekt `opencode-ollama-agents`
 | Profil | `local_agents/profile.py` | gemeinsames Gedächtnis: Person, Arbeitsort, Arbeitskontexte |
 | Feiertage | `local_agents/holidays.py` | gesetzliche Feiertage je Bundesland |
 | Planung | `local_agents/planning.py` | Verschiebevorschläge für interne Termine |
+| Asana-Agent | `local_agents/asana_agent.py` | zeigt, wo der Nutzer in Asana erwähnt wurde |
+| Asana-Quelle | `local_agents/asana_source.py` | liest Erwähnungen über die Asana-API |
 
 ## Einrichtung
 
@@ -110,6 +112,100 @@ dann neu.
 - „Kein Zugriff auf den Kalender": Schritt 2 fehlt.
 - „Keine Termine im Zeitraum", obwohl Termine existieren: Schritt 1 fehlt oder
   die Synchronisierung läuft noch; in der App „Kalender" nachsehen.
+
+## Asana-Agent
+
+Zeigt alle Asana-Kommentare und -Beschreibungen, in denen der Nutzer erwähnt
+wurde, ohne Frage für die letzten 14 Tage:
+
+```bash
+.venv/bin/python -m local_agents.asana_agent
+.venv/bin/python -m local_agents.asana_agent "Wo wurde ich in den letzten 3 Tagen erwähnt?"
+```
+
+Das Modell fasst zusammen, wer was will. Darunter druckt der Code die
+vollständige Liste mit Datum, Autor, Aufgabe, Textauszug und Link, höchstens
+60 Tage zurück. Enthält Aufgaben- oder Projektname ein Stichwort aus dem
+Profil, steht der Kontext dabei, z. B. `[Kunde ACME]`.
+
+### Asana-Token einrichten
+
+Der Agent braucht ein Personal Access Token. Es gilt für das eigene Konto und
+gehört weder ins Repo noch ins Profil, sondern in den macOS-Schlüsselbund. Der
+Agent liest nur; er schreibt nichts nach Asana.
+
+**1. Token in Asana erstellen**
+
+1. In Asana: Profilbild → „Einstellungen" → „Apps" → „Entwicklerkonsole", oder
+   direkt <https://app.asana.com/0/my-apps>.
+2. „Token erstellen" wählen und einen Namen vergeben, z. B. `local-agents`. Der
+   Name dient nur der Übersicht in Asana; für den Agenten spielt er keine Rolle.
+3. Das Token in die Zwischenablage kopieren. Asana zeigt es nur einmal.
+
+**2. Token im Schlüsselbund ablegen (Terminal)**
+
+1. Diesen Befehl ausführen:
+
+   ```bash
+   security add-generic-password -s local-agents-asana -a "$USER" -w
+   ```
+
+2. Bei `password data for new item:` das Token mit `Cmd+V` einfügen und `Enter`
+   drücken. Die Eingabe bleibt unsichtbar, es erscheinen keine Zeichen.
+3. Bei `retype password for new item:` das Token noch einmal einfügen und
+   `Enter` drücken. Ohne Fehlermeldung ist es gespeichert.
+4. Prüfen (zeigt nur die Länge, nicht das Token; eine Zahl um 50–70 heißt, das
+   Token ist da):
+
+   ```bash
+   security find-generic-password -s local-agents-asana -w | wc -c
+   ```
+
+Entscheidend ist der Name des Eintrags, `local-agents-asana`: Daran findet der
+Agent das Token.
+
+**Alternative: App „Schlüsselbundverwaltung"**
+
+1. Mit `Cmd+Leertaste` nach „Schlüsselbundverwaltung" suchen und öffnen.
+2. Links den Schlüsselbund „Anmeldung" wählen, dann „Ablage" → „Neues
+   Passwort …".
+3. Name des Schlüsselbundobjekts: `local-agents-asana`, Accountname: der eigene
+   macOS-Benutzername, Passwort: das Token. „Hinzufügen" klicken.
+4. Beim ersten Start des Agenten fragt macOS, ob `security` auf den Eintrag
+   zugreifen darf: Mac-Passwort eingeben und „Immer erlauben" wählen.
+
+**Alternative: Umgebungsvariable**
+
+`ASANA_ACCESS_TOKEN=<token>` hat Vorrang vor dem Schlüsselbund. Das ist für
+einmalige Tests gedacht; das Token steht dann in der Shell-Historie.
+
+**Fehlerbilder**
+
+- „Kein Asana-Token gefunden": Der Eintrag fehlt oder heißt anders.
+- „The specified item already exists in the keychain": Es gibt schon einen
+  Eintrag. Mit `security delete-generic-password -s local-agents-asana`
+  löschen und neu anlegen. So ersetzt man auch ein Token.
+- „Asana lehnt das Token ab": Das Token ist falsch, abgeschnitten oder in Asana
+  gelöscht worden. Eintrag löschen und mit einem gültigen Token neu anlegen.
+- „Die Asana-Suche gibt es nur in bezahlten Plänen": siehe nächster Abschnitt.
+
+### Wie die Erwähnungen gefunden werden
+
+Asana hat keinen Filter „wo wurde ich erwähnt". Der Agent sucht deshalb alle
+Aufgaben, denen der Nutzer folgt und die im Zeitraum geändert wurden, und prüft
+je Aufgabe die Kommentare und die Beschreibung auf einen Erwähnungs-Link auf
+das eigene Konto. Daraus folgen Grenzen:
+
+- Die Suche gibt es nur in bezahlten Asana-Plänen; sonst meldet der Agent das.
+- Gefunden wird nur, was in Aufgaben steht, denen der Nutzer folgt. In der
+  Asana-Oberfläche wird man durch eine Erwähnung Mitbearbeiter und folgt damit;
+  wer sich danach austrägt, sieht die Erwähnung hier nicht.
+- Eine Erwähnung in der Beschreibung hat kein eigenes Datum. Sie zählt, wenn
+  die Aufgabe im Zeitraum angelegt wurde.
+- Erwähnungen in Projektbeschreibungen, Statusberichten und Nachrichten fehlen.
+- Je Aufgabe ein Abruf, höchstens 500 Aufgaben je Arbeitsbereich.
+
+Die Textauszüge gehen an das lokale Modell, sonst nirgendwohin.
 
 ## Profil: gemeinsames Gedächtnis der Agenten
 
@@ -248,7 +344,7 @@ neuer Kunde ist ein weiterer `[[contexts]]`-Block im Profil.
 
 ## Modell-Einstellungen
 
-Beide Agenten laufen mit niedrigem Reasoning-Aufwand (`MODEL_SETTINGS` in
+Alle Agenten laufen mit niedrigem Reasoning-Aufwand (`MODEL_SETTINGS` in
 `local_agents/agent.py`). Mit der Standardeinstellung schrieb `gpt-oss:20b` in
 1 von 3 Läufen englische Zwischenüberlegungen in die Antwort und brauchte
 31–61 s statt rund 18 s.
@@ -278,3 +374,7 @@ oder Tabelle) schwankt von Lauf zu Lauf.
 - Verschiebevorschläge gegen `gpt-oss:20b`: erscheinen wortgleich unter der
   Zusammenfassung (2026-11-14, 2 Läufe). Ob die Schwellen im Alltag passen, ist
   noch nicht erprobt.
+- Asana-Agent gegen das echte Asana und `gpt-oss:20b`: läuft durch
+  (2026-11-14). Die Suche fand in 14 Tagen 9 gefolgte Aufgaben und darin 1
+  Erwähnung; der Posteingang der Asana-API (16 Benachrichtigungen) enthielt im
+  selben Zeitraum ebenfalls genau 1 Erwähnung.
