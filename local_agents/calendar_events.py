@@ -5,6 +5,7 @@ aktiviertem Kalender eingerichtet sein. Die Termine verlassen den Rechner nicht.
 """
 
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 
@@ -26,6 +27,10 @@ class Event:
     all_day: bool = False
     location: str = ""
     calendar: str = ""
+    # Mail-Domains des Organisators und der Teilnehmer (je Person einmal),
+    # ohne Namen oder Adressen.
+    organizer_domain: str = ""
+    attendee_domains: tuple[str, ...] = ()
 
 
 def next_week(today: date) -> tuple[date, date]:
@@ -34,8 +39,13 @@ def next_week(today: date) -> tuple[date, date]:
     return monday, monday + timedelta(days=6)
 
 
-def format_events(events: list[Event], max_chars: int) -> str:
-    """Kompakte Textliste, nach Tagen gruppiert, fuer das Kontextbudget gekuerzt."""
+def format_events(
+    events: list[Event], max_chars: int, tag: Callable[[Event], str] | None = None
+) -> str:
+    """Kompakte Textliste, nach Tagen gruppiert, fuer das Kontextbudget gekuerzt.
+
+    ``tag`` liefert optional eine Markierung je Termin, etwa den Arbeitskontext.
+    """
     if not events:
         return "Keine Termine im Zeitraum."
     lines: list[str] = []
@@ -46,7 +56,9 @@ def format_events(events: list[Event], max_chars: int) -> str:
             current_day = day
             lines.append(f"{WEEKDAYS[day.weekday()]} {day:%d.%m.%Y}")
         when = "ganztaegig" if event.all_day else f"{event.start:%H:%M}-{event.end:%H:%M}"
-        line = f"  {when} {event.title}"
+        label = tag(event) if tag else ""
+        marker = f"[{label}] " if label else ""
+        line = f"  {when} {marker}{event.title}"
         if event.location:
             line += f" (Ort: {event.location[:MAX_LOCATION_CHARS]})"
         lines.append(line)
@@ -87,10 +99,20 @@ def fetch_events(start: date, end: date) -> list[Event]:
             all_day=bool(item.isAllDay()),
             location=str(item.location() or ""),
             calendar=str(item.calendar().title() or ""),
+            organizer_domain=_domain(item.organizer()),
+            attendee_domains=tuple(
+                domain for domain in map(_domain, item.attendees() or []) if domain
+            ),
         )
         for item in store.eventsMatchingPredicate_(predicate) or []
         if item.status() != EventKit.EKEventStatusCanceled
     ]
+
+
+def _domain(participant) -> str:
+    """Mail-Domain eines EventKit-Teilnehmers, leer ohne Mailadresse."""
+    url = "" if participant is None else str(participant.URL() or "")
+    return url.rsplit("@", 1)[1].lower() if "@" in url else ""
 
 
 def _request_access(store) -> None:

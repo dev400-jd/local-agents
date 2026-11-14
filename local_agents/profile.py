@@ -1,0 +1,175 @@
+"""Gemeinsames Gedaechtnis der Agenten: wer der Nutzer ist und in welchen
+Arbeitskontexten (intern, Kunden) er sich bewegt.
+
+Das Profil ist eine TOML-Datei ausserhalb des Repos, weil sie Kundennamen
+enthaelt. Jeder Agent kann sie laden: ``describe()`` liefert den Text fuer die
+Instruktionen, ``classify()`` ordnet etwas deterministisch einem Kontext zu.
+"""
+
+import os
+import tomllib
+from collections import Counter
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from local_agents.holidays import STATES
+
+DEFAULT_PROFILE_PATH = Path.home() / ".config" / "local-agents" / "profile.toml"
+
+INTERNAL = "intern"
+CUSTOMER = "kunde"
+# Feste Kontexte fuer alles, was das Profil nicht abdeckt.
+EXTERNAL_UNKNOWN = "extern"  # fremde Domains, die keinem Kontext zugeordnet sind
+OTHER = "sonstig"  # ohne Teilnehmer: Feiertage, Blocker, Privates
+
+
+class ProfileError(ValueError):
+    """Die Profildatei ist fehlerhaft."""
+
+
+@dataclass(frozen=True)
+class Context:
+    """Ein Arbeitskontext, zum Beispiel der Arbeitgeber oder ein Kunde."""
+
+    id: str
+    kind: str  # INTERNAL oder CUSTOMER
+    label: str
+    description: str = ""
+    domains: frozenset[str] = frozenset()
+    keywords: tuple[str, ...] = ()
+
+    def has_keyword(self, text: str) -> bool:
+        lowered = text.casefold()
+        return any(keyword in lowered for keyword in self.keywords)
+
+
+@dataclass(frozen=True)
+class Profile:
+    """Nutzerprofil mit Arbeitskontexten; leer, wenn keine Datei existiert."""
+
+    name: str = ""
+    employer: str = ""
+    role: str = ""
+    # Bundesland-Kuerzel des Arbeitsorts, z. B. "HE"; bestimmt die Feiertage.
+    state: str = ""
+    contexts: tuple[Context, ...] = field(default=())
+    # Technische Domains ohne Aussagekraft, z. B. Adressen von Teams-Kanaelen.
+    ignored_domains: frozenset[str] = frozenset()
+
+    def context_ids(self) -> list[str]:
+        """Alle Werte, die ``classify`` liefern kann."""
+        return [context.id for context in self.contexts] + [EXTERNAL_UNKNOWN, OTHER]
+
+    def label(self, context_id: str) -> str:
+        for context in self.contexts:
+            if context.id == context_id:
+                return context.label
+        return {EXTERNAL_UNKNOWN: "Extern (unbekannt)", OTHER: "Sonstiges"}[context_id]
+
+    def classify(self, text: str, organizer: str = "", attendees: Iterable[str] = ()) -> str:
+        """Ordnet einen Text (z. B. Termintitel) einem Kontext zu und gibt dessen id zurueck.
+
+        ``organizer`` ist die Mail-Domain des Einladenden (bei Mails: des
+        Absenders), ``attendees`` die Domains der Teilnehmer, je Person einmal.
+
+        Reihenfolge: Kundenstichwort oder Kunde laedt ein -> Kunde. Internes
+        Stichwort -> intern. Sonst entscheidet die Mehrheit der Teilnehmer:
+        Einzelne Kundenadressen in einer internen Runde (etwa Kundenpostfaecher
+        von Kollegen) machen daraus keinen Kundentermin.
+        """
+        organizer = organizer.casefold()
+        if organizer in self.ignored_domains:
+            organizer = ""
+        counts = Counter(domain.casefold() for domain in attendees)
+        for domain in self.ignored_domains:
+            counts.pop(domain, None)
+        if organizer and not counts:
+            counts[organizer] = 1
+        customers = [c for c in self.contexts if c.kind == CUSTOMER]
+        internals = [c for c in self.contexts if c.kind == INTERNAL]
+
+        for context in customers:
+            if context.has_keyword(text) or organizer in context.domains:
+                return context.id
+        for context in internals:
+            if context.has_keyword(text):
+                return context.id
+        if not counts:
+            return OTHER
+
+        def weight(context: Context) -> int:
+            return sum(n for domain, n in counts.items() if domain in context.domains)
+
+        internal_weight = sum(weight(context) for context in internals)
+        customer = max(customers, key=weight, default=None)
+        if customer and weight(customer) > 0 and weight(customer) >= internal_weight:
+            return customer.id
+        foreign_organizer = organizer and not any(organizer in c.domains for c in internals)
+        if internal_weight * 2 >= counts.total() and not foreign_organizer:
+            return max(internals, key=weight).id
+        return EXTERNAL_UNKNOWN
+
+    def describe(self) -> str:
+        """Kurzbeschreibung fuer die Instruktionen eines Agenten."""
+        if not (self.name or self.contexts or self.state):
+            return ""
+        lines = []
+        who = ", ".join(part for part in (self.name, self.role, self.employer) if part)
+        if who:
+            lines.append(f"Der Nutzer: {who}.")
+        if self.state:
+            lines.append(f"Arbeitsort: {STATES[self.state]}.")
+        if self.contexts:
+            lines.append("Seine Arbeitskontexte (id: Bedeutung):")
+            for context in self.contexts:
+                detail = f" - {context.description}" if context.description else ""
+                lines.append(f"- {context.id}: {context.label}{detail}")
+            lines.append(f"- {EXTERNAL_UNKNOWN}: andere externe Beteiligte, noch nicht zugeordnet")
+            lines.append(f"- {OTHER}: ohne Beteiligte, z. B. Feiertage und Blocker")
+        return "\n".join(lines)
+
+
+def profile_path() -> Path:
+    return Path(os.environ.get("LOCAL_AGENTS_PROFILE", DEFAULT_PROFILE_PATH))
+
+
+def load_profile(path: Path | None = None) -> Profile:
+    """Laedt das Profil; ohne Datei gibt es ein leeres Profil."""
+    path = path or profile_path()
+    if not path.is_file():
+        return Profile()
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        raise ProfileError(f"{path}: {exc}") from exc
+    person = data.get("person", {})
+    contexts = []
+    for raw in data.get("contexts", []):
+        try:
+            context = Context(
+                id=raw["id"],
+                kind=raw["kind"],
+                label=raw.get("label", raw["id"]),
+                description=raw.get("description", ""),
+                domains=frozenset(d.casefold() for d in raw.get("domains", [])),
+                keywords=tuple(k.casefold() for k in raw.get("keywords", [])),
+            )
+        except KeyError as exc:
+            raise ProfileError(f"{path}: Kontext ohne Feld {exc}.") from exc
+        if context.kind not in (INTERNAL, CUSTOMER):
+            raise ProfileError(f"{path}: kind von {context.id} muss intern oder kunde sein.")
+        if context.id in (EXTERNAL_UNKNOWN, OTHER) or context.id in [c.id for c in contexts]:
+            raise ProfileError(f"{path}: Kontext-id {context.id} ist reserviert oder doppelt.")
+        contexts.append(context)
+    state = person.get("state", "").upper()
+    if state and state not in STATES:
+        raise ProfileError(f"{path}: state {state!r} unbekannt. Erlaubt: {', '.join(STATES)}.")
+    return Profile(
+        state=state,
+        name=person.get("name", ""),
+        employer=person.get("employer", ""),
+        role=person.get("role", ""),
+        contexts=tuple(contexts),
+        ignored_domains=frozenset(d.casefold() for d in data.get("ignored_domains", [])),
+    )

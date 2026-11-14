@@ -1,0 +1,35 @@
+# Vorlage fuer das Profil. Kopieren nach ~/.config/local-agents/profile.toml
+# (oder Pfad in LOCAL_AGENTS_PROFILE setzen) und anpassen.
+# Die echte Datei gehoert nicht ins Repo: Sie enthaelt Kundennamen.
+
+# Technische Domains, die bei der Zuordnung nicht zaehlen (z. B. Teams-Kanaele).
+ignored_domains = ["emea.teams.ms"]
+
+[person]
+name = "Erika Beispiel"
+employer = "Beispiel GmbH"
+role = "Teamleitung"
+# Bundesland des Arbeitsorts (Kuerzel wie HE, BY, NW): Feiertage, die dort
+# nicht gelten, blendet der Kalender-Agent aus.
+state = "HE"
+
+# kind = "intern": Arbeitgeber. Ein Termin ist intern, wenn der Titel ein
+# Stichwort enthaelt oder die Teilnehmer ueberwiegend diese Domains haben.
+[[contexts]]
+id = "intern"
+kind = "intern"
+label = "Intern (Beispiel GmbH)"
+description = "Teamleitung, interne Abstimmungen"
+domains = ["beispiel.de"]
+keywords = []
+
+# kind = "kunde": Ein Kunde je Block. Ein Termin gehoert zum Kunden, wenn der
+# Titel ein Stichwort enthaelt, der Kunde einlaedt oder mindestens so viele
+# Kunden- wie interne Adressen eingeladen sind. Regeln im Detail: README.
+[[contexts]]
+id = "kunde-acme"
+kind = "kunde"
+label = "Kunde ACME"
+description = "Projekt Datenplattform"
+domains = ["acme.example"]
+keywords = ["acme", "datenplattform"]

@@ -5,6 +5,14 @@ Ollama-Modell (`gpt-oss:20b`, 16K Kontext). Ollama-Einrichtung, Speichergrenzen
 und Modellerfahrungen stehen im Schwesterprojekt `opencode-ollama-agents`
 (`docs/setup-macos.md`, `docs/performance.md`).
 
+| Baustein | Datei | Zweck |
+|---|---|---|
+| Datei-Agent | `local_agents/agent.py` | beantwortet Fragen zu Dateien eines Verzeichnisses |
+| Kalender-Agent | `local_agents/calendar_agent.py` | fasst Termine aus dem macOS-Kalender zusammen |
+| Terminquelle | `local_agents/calendar_events.py` | liest Termine über EventKit |
+| Profil | `local_agents/profile.py` | gemeinsames Gedächtnis: Person, Arbeitsort, Arbeitskontexte |
+| Feiertage | `local_agents/holidays.py` | gesetzliche Feiertage je Bundesland |
+
 ## Einrichtung
 
 ```bash
@@ -102,6 +110,107 @@ dann neu.
 - „Keine Termine im Zeitraum", obwohl Termine existieren: Schritt 1 fehlt oder
   die Synchronisierung läuft noch; in der App „Kalender" nachsehen.
 
+## Profil: gemeinsames Gedächtnis der Agenten
+
+`local_agents/profile.py` lädt ein Profil, das beschreibt, wer der Nutzer ist
+und in welchen Arbeitskontexten er sich bewegt (intern, je Kunde ein Kontext).
+Es liegt außerhalb des Repos, weil es Kundennamen enthält:
+
+```bash
+mkdir -p ~/.config/local-agents
+cp profile.example.toml ~/.config/local-agents/profile.toml
+```
+
+`.config` ist ein versteckter Ordner: im Terminal mit
+`open -e ~/.config/local-agents/profile.toml` öffnen, im Finder mit
+`Cmd+Shift+G` den Pfad eingeben. Anderer Pfad: `LOCAL_AGENTS_PROFILE=<datei>`
+setzen. Ohne Profil laufen die Agenten wie bisher, nur ohne Kontexte.
+
+Felder der Datei:
+
+| Feld | Bedeutung |
+|---|---|
+| `ignored_domains` | technische Domains, die bei der Zuordnung nicht zählen (z. B. Teams-Kanäle) |
+| `[person]` `name`, `employer`, `role` | wer der Nutzer ist; steht in den Instruktionen jedes Agenten |
+| `[person]` `state` | Bundesland des Arbeitsorts als Kürzel (`HE`, `BY`, `NW` …), siehe Feiertage |
+| `[[contexts]]` `id` | Kennung, nach der gefiltert wird; `extern` und `sonstig` sind reserviert |
+| `[[contexts]]` `kind` | `intern` (Arbeitgeber) oder `kunde` (je Kunde ein Block) |
+| `[[contexts]]` `label`, `description` | Anzeigename und Erläuterung, z. B. das Projekt |
+| `[[contexts]]` `domains` | Mail-Domains, die zu diesem Kontext gehören |
+| `[[contexts]]` `keywords` | Stichwörter im Titel, Groß-/Kleinschreibung egal |
+
+Eine fehlerhafte Datei (unbekanntes Bundesland, falsches `kind`, doppelte `id`)
+bricht den Lauf mit einer Meldung ab.
+
+Jeder Agent kann das Profil auf zwei Arten nutzen:
+
+- `Profile.describe()` liefert den Text für die Instruktionen, damit das Modell
+  Rolle und Kontexte kennt.
+- `Profile.classify(text, organizer, attendees)` ordnet etwas einem Kontext
+  zu, anhand von Titel, Domain des Einladenden und Domains der Teilnehmer. Das
+  macht der Code, nicht das Modell, damit die Zuordnung wiederholbar ist. Für
+  Mails passt dieselbe Funktion: Absender statt Organisator.
+
+Regeln der Zuordnung, in dieser Reihenfolge:
+
+1. **Kunde:** Der Titel enthält ein Stichwort des Kunden, oder der Kunde lädt
+   ein (Domain des Organisators).
+2. **Intern:** Der Titel enthält ein internes Stichwort.
+3. **`sonstig`:** keine Beteiligten (Blocker, Privates).
+4. **Mehrheit der Teilnehmer:** Bei interner Einladung gilt der Termin nur als
+   Kundentermin, wenn mindestens so viele Kunden- wie interne Adressen
+   eingeladen sind. Einzelne Kundenadressen in einer internen Runde (etwa
+   Kundenpostfächer von Kollegen im Company Call) ändern nichts.
+5. **`extern`:** ein fremder Organisator oder überwiegend fremde Domains, die
+   noch keinem Kontext zugeordnet sind.
+
+Der Kalender-Agent markiert damit jeden Termin, etwa `[Kunde ACME]` oder
+`[Intern (Beispiel GmbH)]`, und kann über den Parameter `context` von `list_events`
+filtern:
+
+```bash
+.venv/bin/python -m local_agents.calendar_agent "Welche Kundentermine habe ich nächste Woche?"
+.venv/bin/python -m local_agents.calendar_agent "Was steht intern an?"
+```
+
+### Standort und Feiertage
+
+Feiertagskalender zeigen alle deutschen Feiertage, auch solche, die nur in
+einzelnen Bundesländern gelten. Mit `state = "HE"` unter `[person]` (Kürzel des
+Bundeslands) blendet der Kalender-Agent alle Einträge aus Feiertagskalendern
+aus, die am Arbeitsort kein gesetzlicher Feiertag sind: Der Buß- und Bettag
+(nur Sachsen) und Gedenktage wie der Totensonntag tauchen für Hessen gar nicht
+erst auf. Als Feiertagskalender gilt jeder Kalender, dessen Name „Feiertag"
+oder „Holiday" enthält.
+
+Feiertage, die am Arbeitsort gelten, bleiben stehen und sind als
+`gesetzlicher Feiertag in Hessen, arbeitsfrei` markiert. Liegen an so einem Tag
+Termine, liefert das Werkzeug einen fertig formulierten Hinweis, den das Modell
+übernimmt: „Do 04.06.: Fronleichnam ist in Hessen gesetzlicher Feiertag
+(arbeitsfrei), trotzdem 2 Termine eingetragen."
+
+`local_agents/holidays.py` berechnet die Feiertage je Bundesland ohne Netz.
+Feiertage, die nur in einzelnen Gemeinden gelten, sind vereinfacht: Mariä
+Himmelfahrt zählt für ganz Bayern, Fronleichnam nicht für Sachsen und
+Thüringen, das Augsburger Friedensfest gar nicht. Führen zwei
+Feiertagskalender denselben Tag, erscheint der Feiertag nur einmal. Ohne
+`state` bleiben alle Einträge sichtbar, mit dem Vermerk, wo sie gelten.
+
+Von den Beteiligten liest der Agent nur die Mail-Domains, keine Namen. Ein
+neuer Kunde ist ein weiterer `[[contexts]]`-Block im Profil.
+
+## Modell-Einstellungen
+
+Beide Agenten laufen mit niedrigem Reasoning-Aufwand (`MODEL_SETTINGS` in
+`local_agents/agent.py`). Mit der Standardeinstellung schrieb `gpt-oss:20b` in
+1 von 3 Läufen englische Zwischenüberlegungen in die Antwort und brauchte
+31–61 s statt rund 18 s.
+
+Was verlässlich sein muss, entscheidet der Code und nicht das Modell:
+Zeitraum der nächsten Woche, Zuordnung zu Kontexten, Auswahl der Feiertage und
+der Wortlaut der Feiertagshinweise. Das Modell formuliert nur die
+Zusammenfassung; deren Aufbau (Liste oder Tabelle) schwankt von Lauf zu Lauf.
+
 ## Stand
 
 - Tests mit geskriptetem Modell: bestanden.
@@ -110,3 +219,9 @@ dann neu.
   gibt er teils ungenau wieder (z. B. „16 KB" statt 16K Tokens).
 - Kalender-Agent gegen `gpt-oss:20b`: läuft durch (2026-11-14, 20 Termine,
   ca. 25 s). Zusammenfassung manuell geprüft: funktioniert gut.
+- Profil und Kontextfilter gegen `gpt-oss:20b`: laufen durch (2026-11-14),
+  Ausgabe manuell geprüft. Die Zuordnung wurde danach verfeinert (Organisator
+  und Mehrheit der Teilnehmer), weil einzelne Kundenadressen interne Termine
+  zu Kundenterminen machten.
+- Feiertage je Bundesland gegen `gpt-oss:20b`: Für Hessen erscheinen Buß- und
+  Bettag und Totensonntag nicht mehr (2026-11-14, 4 Läufe).

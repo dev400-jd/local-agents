@@ -17,6 +17,10 @@ OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1")
 # Kontextbudget ist 16K: Dateiinhalte werden gekuerzt, Antworten begrenzt.
 MAX_FILE_CHARS = 8000
 MAX_OUTPUT_TOKENS = 2048
+# Niedriger Reasoning-Aufwand: Bei gpt-oss landen die englischen
+# Zwischenueberlegungen sonst gelegentlich in der Antwort, und die Laeufe
+# dauern zwei- bis dreimal so lange.
+MODEL_SETTINGS = {"max_tokens": MAX_OUTPUT_TOKENS, "openai_reasoning_effort": "low"}
 
 INSTRUCTIONS = (
     "Du beantwortest Fragen zu Dateien in einem Projektverzeichnis. "
@@ -40,7 +44,7 @@ def ollama_model() -> OpenAIChatModel:
 agent = Agent(
     deps_type=Deps,
     instructions=INSTRUCTIONS,
-    model_settings={"max_tokens": MAX_OUTPUT_TOKENS},
+    model_settings=MODEL_SETTINGS,
     retries=2,
 )
 
