@@ -160,6 +160,8 @@ class StatusDeps:
     store: Store
     profile: Profile = field(default_factory=Profile)
     notes: dict[str, list[str]] = field(default_factory=dict)
+    # Die naechste Aufgabe, sobald der Agent gelaufen ist: die Uebergabe an den naechsten Agenten.
+    item: StatusItem | None = None
 
 
 status_agent = Agent(deps_type=StatusDeps, model_settings=MODEL_SETTINGS)
@@ -169,7 +171,7 @@ status_agent = Agent(deps_type=StatusDeps, model_settings=MODEL_SETTINGS)
 def instructions(ctx: RunContext[StatusDeps]) -> str:
     deps = ctx.deps
     items = next_tasks(deps.store, deps.now)
-    item = next_task(deps.store, deps.now)
+    item = deps.item = next_task(deps.store, deps.now)
     heading = status_heading(deps.now, approved_at(deps.store))
     if item is None:
         deps.notes[heading] = ["Es steht keine Aufgabe an."]

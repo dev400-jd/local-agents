@@ -38,6 +38,8 @@ class Context:
     kind: str  # INTERNAL oder CUSTOMER
     label: str
     description: str = ""
+    # Rolle des Nutzers in diesem Kontext, falls sie von der allgemeinen abweicht.
+    role: str = ""
     domains: frozenset[str] = frozenset()
     keywords: tuple[str, ...] = ()
     # Nur fuer Kunden: Stresslevel des Projekts (STRESS_LEVELS, leer = niedrig)
@@ -155,6 +157,8 @@ class Profile:
             lines.append("Seine Arbeitskontexte (id: Bedeutung):")
             for context in self.contexts:
                 detail = f" - {context.description}" if context.description else ""
+                if context.role:
+                    detail += f"; Rolle {context.role}"
                 if context.stress:
                     detail += f"; Stresslevel {context.stress}"
                 if context.onsite_days:
@@ -197,6 +201,7 @@ def load_profile(path: Path | None = None) -> Profile:
                 kind=raw["kind"],
                 label=raw.get("label", raw["id"]),
                 description=raw.get("description", ""),
+                role=raw.get("role", ""),
                 domains=frozenset(d.casefold() for d in raw.get("domains", [])),
                 keywords=tuple(k.casefold() for k in raw.get("keywords", [])),
                 stress=raw.get("stress", "").casefold(),

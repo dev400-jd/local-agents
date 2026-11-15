@@ -22,7 +22,10 @@ und Modellerfahrungen stehen im Schwesterprojekt `opencode-ollama-agents`
 | Sprachausgabe | `local_agents/voice.py` | liest Text mit dem lokalen Sprachmodell Piper vor |
 | Spracheingabe | `local_agents/listen.py` | nimmt eine gesprochene Antwort auf und erkennt sie lokal mit Whisper |
 | Rückmeldung | `local_agents/feedback.py` | setzt die Antwort auf den Plan um: Aufgaben herausnehmen oder ergänzen |
-| Status-Agent | `local_agents/status_agent.py` | kennt Datum und Uhrzeit, nennt die nächsten Aufgaben und ihre Dringlichkeit |
+| Status-Agent | `local_agents/status_agent.py` | kennt Datum und Uhrzeit, nennt die eine Aufgabe, die als Nächstes dran ist |
+| Termin-Agent | `local_agents/meeting_agent.py` | erkennt die Art des Termins und welche Ergebnisse dir dafür helfen |
+| Terminarten | `local_agents/meeting_types.py` | Katalog: Zweck und übliche Beiträge je Terminart, auch Scrum |
+| Orchestrierung | `local_agents/orchestrator.py` | reicht die nächste Aufgabe von Agent zu Agent weiter |
 
 ## Ablauf im Überblick
 
@@ -38,14 +41,15 @@ Stimme und Spracherkennung:
 3. **Absegnen:** Du antwortest gesprochen (oder getippt mit `--stumm`). Ein Ja
    lässt den Plan stehen, sonst nimmt der Agent Aufgaben heraus oder ergänzt
    welche. Danach gilt der Plan als abgesegnet.
-4. **Abarbeiten** (`status_agent`): nennt zu Datum und Uhrzeit die eine
-   Aufgabe, die als Nächstes dran ist. Agenten, die Aufgaben selbst erledigen,
-   gibt es noch nicht; sie sollen sich die nächste Aufgabe über
-   `next_task(...)` holen und Status und Ergebnis in die Datenbank schreiben.
+4. **Abarbeiten** (`orchestrator`): Der Status-Agent nennt zu Datum und
+   Uhrzeit die eine Aufgabe, die als Nächstes dran ist, und übergibt sie dem
+   Termin-Agenten. Der erkennt die Art des Termins und nennt die Ergebnisse,
+   die dir in deiner Rolle dafür helfen. Agenten, die diese Ergebnisse
+   erarbeiten, gibt es noch nicht.
 
 ```bash
 .venv/bin/python -m local_agents.planner_agent   # Schritte 1 bis 3
-.venv/bin/python -m local_agents.status_agent    # Schritt 4
+.venv/bin/python -m local_agents.orchestrator    # Schritt 4
 .venv/bin/python -m local_agents.tasks           # der ganze Plan
 ```
 
@@ -480,7 +484,8 @@ Repos, weil Termintitel und Kundennamen darin stehen. Anderer Pfad:
 |---|---|
 | `events` | Termine, wie der Planungs-Agent sie gesehen hat: Titel, Beginn, Ende, Kontext, Ort, Zahl der Eingeladenen, Name des Organisators |
 | `tasks` | Aufgaben: Art (`kind`), Titel, Kontext, Fertig-bis-Datum, Status, zuständiger Agent, Ergebnis, zugehöriger Termin |
-| `runs` | Protokoll: welcher Agent wann lief, mit Status und Kurzfassung. Einträge: `planner` (Planungslauf), `rueckmeldung` (Antwort mit Änderungen ausgewertet), `freigabe` (Plan abgesegnet) |
+| `briefs` | Einordnung des Termins hinter einer Aufgabe: Terminart, Begründung, Ergebnisse für den Nutzer, Rolle |
+| `runs` | Protokoll: welcher Agent wann lief, mit Status und Kurzfassung. Einträge: `planner` (Planungslauf), `rueckmeldung` (Antwort mit Änderungen ausgewertet), `freigabe` (Plan abgesegnet), `termin` (Termin eingeordnet) |
 
 Status einer Aufgabe: `offen`, `in_arbeit`, `erledigt`, `verworfen` (Termin
 entfallen) und `abgelehnt` (von dir herausgenommen). Die
@@ -537,6 +542,63 @@ Andere Agenten brauchen dafür kein Modell: `next_task(Store(), datetime.now())`
 aus `local_agents/status_agent.py` liefert die dringendste offene Aufgabe mit
 Stufe und Zeit bis zum Termin, `next_tasks(...)` alle in dieser Reihenfolge.
 
+## Termin-Agent und Orchestrierung
+
+```bash
+.venv/bin/python -m local_agents.orchestrator         # Status-Agent, dann Termin-Agent
+.venv/bin/python -m local_agents.orchestrator --neu   # Termin neu einordnen lassen
+```
+
+Die Orchestrierung (`local_agents/orchestrator.py`) ist Code, kein Modell: Sie
+lässt den Status-Agenten laufen und übergibt dessen nächste Aufgabe samt
+Termin an den Agenten, der zur Art der Aufgabe passt. Bisher gibt es einen:
+Vorbereitungsaufgaben gehen an den Termin-Agenten. Für andere Arten (etwa
+„Nachricht an …") endet die Kette nach dem Status mit einem Hinweis.
+
+```text
+**Stand So 15.11.2026, 20:02 Uhr (Plan abgesegnet am 15.11. 18:45)**
+Als Nächstes: #1 Vorbereitung: Plattform - Daily (Mo 16.11. 09:00) [Kunde ACME; heute fällig; …]
+
+**Terminart: Daily / Stand-up, Scrum**
+Woran erkannt: Der Titel enthält das Stichwort Daily und der Termin dient einer kurzen Abstimmung
+Zweck: Das Team stimmt sich in etwa 15 Minuten ab: Fortschritt zum Sprintziel, …
+Was man dort üblicherweise beiträgt:
+- Was seit dem letzten Daily erreicht wurde
+- Was bis zum nächsten Daily ansteht
+- Hindernisse und offene Punkte, bei denen andere helfen oder entscheiden müssen
+
+**Ergebnisse, die dir für diesen Termin helfen (als Solution Architect, Kunde ACME)**
+- Liste der seit letztem Daily erledigten Architekturaufgaben im Projekt
+- …
+```
+
+Der Termin-Agent arbeitet in zwei Teilen:
+
+- **Terminart.** Das Modell ordnet den Termin einer Art aus dem Katalog zu
+  (`local_agents/meeting_types.py`): Daily, Sprint Planning, Sprint Review,
+  Retrospektive, Backlog Refinement, Jour fixe, Einzelgespräch, Workshop,
+  Problemklärung, Statusbericht/Lenkungsausschuss, Kick-off, Präsentation,
+  große Runde, Sonstiges. Anhaltspunkte sind Titel, Dauer, Zahl der
+  Eingeladenen und Kontext. Zweck und übliche Beiträge der Art kommen
+  unverändert aus dem Katalog. Neue Arten trägst du dort ein.
+- **Ergebnisse für dich.** Aus deiner Rolle im Kontext des Termins leitet das
+  Modell ein bis fünf Ergebnisse ab, die du vorbereitet haben solltest. Die
+  Rolle steht im Profil je Kontext (`role = "Solution Architect"`); fehlt sie,
+  gilt die allgemeine Rolle aus `[person]`.
+
+Die Einordnung wird zur Aufgabe gespeichert (Tabelle `briefs`) und beim
+nächsten Lauf wiederverwendet; sie ist der Auftrag für Agenten, die den Termin
+später inhaltlich vorbereiten. Liefert das Modell nichts Brauchbares, gilt das
+Stichwort im Titel oder „Sonstiges" mit den Beiträgen aus dem Katalog.
+
+Grenzen: Die Ergebnisse formuliert das Modell, und es kennt nur Titel, Rolle
+und Projektnamen, nicht den Inhalt des Projekts. Sie sind mal mehr, mal
+weniger auf die Rolle bezogen und können Vermutetes enthalten. Mehrdeutige
+Titel (nur der Projektname) ordnet es nach Dauer und Teilnehmerzahl ein, das
+ist geraten. Der Termin-Agent läuft mit mittlerem Reasoning-Aufwand: Mit
+niedrigem übernahm `gpt-oss:20b` die Katalog-Beiträge wörtlich oder erfand
+Projektdetails.
+
 ### Modell je Agent
 
 Jeder Agent kann ein eigenes Ollama-Modell bekommen, über den Agentennamen im
@@ -544,7 +606,7 @@ Profil; ohne Eintrag gilt das Standardmodell:
 
 ```toml
 [models]
-status = "qwen3.5:9b-q8_0"
+status = "qwen3.5:9b-q8_0"   # Agentennamen: status, termin
 ```
 
 Gemessen am Status-Agenten mit 15 offenen Aufgaben (2026-11-15, je 2 Läufe):
@@ -585,6 +647,7 @@ Felder der Datei:
 | `[[contexts]]` `id` | Kennung, nach der gefiltert wird; `extern` und `sonstig` sind reserviert |
 | `[[contexts]]` `kind` | `intern` (Arbeitgeber) oder `kunde` (je Kunde ein Block) |
 | `[[contexts]]` `label`, `description` | Anzeigename und Erläuterung, z. B. das Projekt |
+| `[[contexts]]` `role` | deine Rolle in diesem Kontext, falls sie von `[person]` `role` abweicht; nutzt der Termin-Agent |
 | `[[contexts]]` `domains` | Mail-Domains, die zu diesem Kontext gehören |
 | `[[contexts]]` `keywords` | Stichwörter im Titel, Groß-/Kleinschreibung egal |
 | `[[contexts]]` `stress` | nur Kunden: Stresslevel des Projekts, `niedrig`, `mittel` oder `hoch` |
@@ -725,6 +788,10 @@ Dasselbe gilt für die neueren Bausteine:
 | Welche Aufgaben eine Antwort meint, welche neu dazukommen | Modell; der Code prüft die Nummern und nennt jede Änderung |
 | Welche Aufgabe als Nächstes dran ist | Code |
 | Ein, zwei Sätze des Status-Agenten dazu | Modell; es sieht nur diese eine Aufgabe |
+| Welcher Agent die nächste Aufgabe bekommt | Code (Orchestrierung) |
+| Art eines Termins | Modell, aus einem festen Katalog; der Code prüft die Auswahl |
+| Zweck und übliche Beiträge der Terminart | Code (Katalog) |
+| Ergebnisse, die dem Nutzer für den Termin helfen | Modell; nicht geprüft, als Vorschlag zu lesen |
 
 Der Name des Organisators eines Termins geht an das lokale Modell, wenn es
 eine Antwort auswertet oder der Status-Agent eine Nachricht-Aufgabe nennt.
@@ -771,3 +838,11 @@ eine Antwort auswertet oder der Status-Agent eine Nachricht-Aufgabe nennt.
 - Noch offen: Agenten, die Aufgaben selbst erledigen; vom Nutzer ergänzte
   Aufgaben (`manuell`) erscheinen in `tasks` und beim Status-Agenten, aber
   nicht in der Planliste und der Kurzfassung des Planungs-Agenten.
+- Termin-Agent mit `gpt-oss:20b` gegen eine Kopie der echten Datenbank
+  (2026-11-15, 10 verschiedene Termine): Terminart bei den eindeutigen Titeln
+  richtig (Daily, Sync, Brainstorming, Statusmeeting, großes Team-Meeting);
+  bei mehrdeutigen schwankend (ein Zweiertermin einmal Jour fixe, einmal
+  Einzelgespräch). Ergebnisse mit mittlerem Reasoning-Aufwand in 9–20 s und
+  meist auf die Rolle bezogen, vereinzelt mit Vermutetem. Kette
+  Status-Agent → Termin-Agent auf der echten Datenbank: rund 6 s, mit
+  gespeicherter Einordnung rund 2 s.

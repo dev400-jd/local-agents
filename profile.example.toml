@@ -31,6 +31,9 @@ id = "kunde-acme"
 kind = "kunde"
 label = "Kunde ACME"
 description = "Projekt Datenplattform"
+# Rolle in diesem Kontext, falls sie von der allgemeinen Rolle abweicht. Der
+# Termin-Agent leitet daraus ab, was du in einem Termin liefern solltest.
+role = "Solution Architect"
 domains = ["acme.example"]
 keywords = ["acme", "datenplattform"]
 # Stresslevel des Projekts: "niedrig", "mittel" oder "hoch". Ab "mittel" schlaegt

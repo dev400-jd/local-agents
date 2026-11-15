@@ -1,15 +1,17 @@
 """Agenten-Datenbank: gemeinsamer Arbeitsstand aller Agenten in einer SQLite-Datei.
 
-Drei Tabellen:
+Vier Tabellen:
 
 - ``events``: Termine, wie der Planungs-Agent sie gesehen hat.
 - ``tasks``: Aufgaben mit Fertig-bis-Datum, Status und Ergebnis.
+- ``briefs``: Einordnung des Termins hinter einer Aufgabe (Termin-Agent).
 - ``runs``: Protokoll, welcher Agent wann lief.
 
 Die Datei liegt ausserhalb des Repos (Termintitel, Kundennamen). Agenten laufen
 nacheinander; gleichzeitige Schreiber sind nicht vorgesehen.
 """
 
+import json
 import os
 import sqlite3
 from dataclasses import dataclass
@@ -54,6 +56,15 @@ CREATE TABLE IF NOT EXISTS tasks (
     UNIQUE (event_id, kind)
 );
 CREATE INDEX IF NOT EXISTS tasks_due ON tasks (status, due_date);
+CREATE TABLE IF NOT EXISTS briefs (
+    task_id      INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    title        TEXT NOT NULL,      -- Termintitel, fuer den die Einordnung gilt
+    meeting_type TEXT NOT NULL,      -- id aus meeting_types.py
+    reason       TEXT NOT NULL DEFAULT '',
+    deliverables TEXT NOT NULL,      -- JSON-Liste: Ergebnisse, die dem Nutzer helfen
+    role         TEXT NOT NULL DEFAULT '',
+    updated_at   TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS runs (
     id          INTEGER PRIMARY KEY,
     agent       TEXT NOT NULL,
@@ -88,6 +99,18 @@ class Task:
     status: str
     agent: str
     result: str
+
+
+@dataclass(frozen=True)
+class Brief:
+    """Was der Termin-Agent ueber den Termin hinter einer Aufgabe herausgefunden hat."""
+
+    task_id: int
+    title: str
+    meeting_type: str
+    reason: str
+    deliverables: tuple[str, ...]
+    role: str = ""
 
 
 def db_path() -> Path:
@@ -277,6 +300,39 @@ class Store:
                 (status, result, _now(), task_id),
             )
         return cursor.rowcount == 1
+
+    # --- Einordnungen
+
+    def save_brief(
+        self,
+        task_id: int,
+        title: str,
+        meeting_type: str,
+        reason: str,
+        deliverables: tuple[str, ...],
+        role: str = "",
+    ) -> Brief:
+        """Speichert die Einordnung zu einer Aufgabe; eine vorhandene wird ersetzt."""
+        with self.db:
+            self.db.execute(
+                "INSERT OR REPLACE INTO briefs (task_id, title, meeting_type, reason, deliverables, "
+                "role, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (task_id, title, meeting_type, reason, json.dumps(list(deliverables), ensure_ascii=False), role, _now()),
+            )
+        return Brief(task_id, title, meeting_type, reason, tuple(deliverables), role)
+
+    def brief(self, task_id: int) -> Brief | None:
+        row = self.db.execute("SELECT * FROM briefs WHERE task_id = ?", (task_id,)).fetchone()
+        if row is None:
+            return None
+        return Brief(
+            row["task_id"],
+            row["title"],
+            row["meeting_type"],
+            row["reason"],
+            tuple(json.loads(row["deliverables"])),
+            row["role"],
+        )
 
     # --- Laeufe
 
