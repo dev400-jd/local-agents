@@ -217,6 +217,22 @@ eine Aufgabe „Vorbereitung" in der Agenten-Datenbank an, fertig am Vortag des
 Termins: Das Daily am Montag, 16.11., ergibt eine Aufgabe, die am Sonntag,
 15.11., fertig sein muss.
 
+Interne Termine, die laut den [Verschiebevorschlägen](#verschiebevorschläge)
+weichen sollten (Kundentag, interner Block bei Stress), bekommen zusätzlich
+eine Aufgabe mit mehr Vorlauf, damit die Bitte rechtzeitig rausgeht. Ein Jour
+fixe am Mittwoch, 18.11., ergibt bei drei Tagen Puffer eine Aufgabe für
+Sonntag, 15.11.:
+
+```text
+Nachricht an Erika Muster: Jour fixe (Mi 18.11. 10:00) verschieben, weil Kundentag Kunde ACME
+```
+
+Der Name ist der Organisator aus der Einladung. Hast du selbst eingeladen,
+heißt die Aufgabe „Selbst verschieben: …", bei großen Runden (mehr als 10
+Eingeladene) „Absage an …". Liegt das Datum schon in der Vergangenheit, ist die
+Aufgabe heute fällig. Trifft die Regel nicht mehr zu, verwirft der nächste Lauf
+die offene Aufgabe.
+
 ```bash
 .venv/bin/python -m local_agents.planner_agent
 .venv/bin/python -m local_agents.planner_agent "Plane die Woche ab dem 23.11.2026"
@@ -236,7 +252,8 @@ jeder Termin einer Serie eine eigene. Einstellungen im Profil:
 
 ```toml
 [planning]
-lead_days = 1               # Tage vor dem Termin; 1 = am Vortag, auch am Wochenende
+lead_days = 1               # Vorbereitung: Tage vor dem Termin; 1 = am Vortag, auch am Wochenende
+move_lead_days = 3          # Nachricht zum Verschieben: Tage vor dem Termin
 skip = ["Company Call"]     # Stichwörter im Titel: keine Aufgabe
 ```
 
@@ -261,7 +278,7 @@ Repos, weil Termintitel und Kundennamen darin stehen. Anderer Pfad:
 
 | Tabelle | Inhalt |
 |---|---|
-| `events` | Termine, wie der Planungs-Agent sie gesehen hat: Titel, Beginn, Ende, Kontext, Ort, Zahl der Eingeladenen |
+| `events` | Termine, wie der Planungs-Agent sie gesehen hat: Titel, Beginn, Ende, Kontext, Ort, Zahl der Eingeladenen, Name des Organisators |
 | `tasks` | Aufgaben: Art (`kind`), Titel, Kontext, Fertig-bis-Datum, Status, zuständiger Agent, Ergebnis, zugehöriger Termin |
 | `runs` | Protokoll: welcher Agent wann lief, mit Status und Kurzfassung |
 
@@ -307,6 +324,7 @@ Felder der Datei:
 | `[[contexts]]` `stress` | nur Kunden: Stresslevel des Projekts, `niedrig`, `mittel` oder `hoch` |
 | `[[contexts]]` `onsite_days` | nur Kunden: Tage beim Kunden, z. B. `["Mi"]` oder `["Mittwoch", "Fr"]` |
 | `[planning]` `lead_days` | Planungs-Agent: Aufgaben sind so viele Tage vor dem Termin fertig (Standard 1) |
+| `[planning]` `move_lead_days` | Planungs-Agent: Vorlauf der Aufgaben „Nachricht an …, Termin verschieben" (Standard 3) |
 | `[planning]` `skip` | Planungs-Agent: Stichwörter im Titel, für die keine Aufgabe entsteht |
 
 Eine fehlerhafte Datei (unbekanntes Bundesland, falsches `kind`, doppelte `id`)

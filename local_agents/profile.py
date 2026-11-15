@@ -66,6 +66,8 @@ class Profile:
     # einem dieser Stichwoerter im Titel bekommen keine Aufgabe.
     lead_days: int = 1
     plan_skip: tuple[str, ...] = ()
+    # Aufgaben "Termin verschieben" sind so viele Tage vor dem Termin faellig.
+    move_lead_days: int = 3
 
     def context_ids(self) -> list[str]:
         """Alle Werte, die ``classify`` liefern kann."""
@@ -196,11 +198,14 @@ def load_profile(path: Path | None = None) -> Profile:
     if state and state not in STATES:
         raise ProfileError(f"{path}: state {state!r} unbekannt. Erlaubt: {', '.join(STATES)}.")
     planning = data.get("planning", {})
-    lead_days = planning.get("lead_days", 1)
-    if not isinstance(lead_days, int) or isinstance(lead_days, bool) or lead_days < 0:
-        raise ProfileError(f"{path}: lead_days muss eine ganze Zahl ab 0 sein.")
+    days = {}
+    for key, default in (("lead_days", 1), ("move_lead_days", 3)):
+        value = planning.get(key, default)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ProfileError(f"{path}: {key} muss eine ganze Zahl ab 0 sein.")
+        days[key] = value
     return Profile(
-        lead_days=lead_days,
+        **days,
         plan_skip=tuple(word.casefold() for word in planning.get("skip", [])),
         state=state,
         name=person.get("name", ""),

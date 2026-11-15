@@ -13,6 +13,7 @@ Antwort des Modells gedruckt.
 """
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import date, timedelta
 
 from local_agents.calendar_events import Event
@@ -28,10 +29,34 @@ MAX_GAP = timedelta(minutes=30)
 LARGE_ROUND = 10
 
 
+@dataclass(frozen=True)
+class MoveGroup:
+    """Interne Termine eines Kundentags oder Blocks, die weichen koennten."""
+
+    headline: str  # Listenpunkt fuer die Uebersicht, ohne die einzelnen Termine
+    reason: str  # kurze Begruendung fuer eine Aufgabe je Termin
+    meetings: list[Event]
+
+
 def move_suggestions(
     events: list[Event], profile: Profile, context_of: Callable[[Event], str]
 ) -> list[str]:
     """Fertig formulierte Vorschlaege: je Tag oder Block ein Listenpunkt mit Unterpunkten."""
+    return [
+        group.headline + _items(group.meetings)
+        for group in move_groups(events, profile, context_of)
+    ]
+
+
+def is_large_round(event: Event) -> bool:
+    """Ob der Nutzer den Termin wegen der vielen Eingeladenen kaum verschieben kann."""
+    return len(event.attendee_domains) > LARGE_ROUND
+
+
+def move_groups(
+    events: list[Event], profile: Profile, context_of: Callable[[Event], str]
+) -> list[MoveGroup]:
+    """Die Termine hinter den Vorschlaegen, je Kundentag oder Block eine Gruppe."""
     customers = [c for c in profile.contexts if c.kind == CUSTOMER]
     internal_ids = {c.id for c in profile.contexts if c.kind == INTERNAL}
     if not customers or not internal_ids:
@@ -50,14 +75,18 @@ def move_suggestions(
     stressed = max(customers, key=lambda c: STRESS_LEVELS.index(c.stress or STRESS_LEVELS[0]))
     rule = BLOCK_RULES.get(stressed.stress)
 
-    lines = []
+    groups = []
     for day, meetings in by_day.items():
         when = f"{WEEKDAYS[day.weekday()]} {day:%d.%m.}"
         onsite = [c.label for c in customers if day.weekday() in c.onsite_days]
         if onsite:
-            lines.append(
-                f"- {when} ist Kundentag ({', '.join(onsite)}), {_count(len(meetings))} "
-                f"verschieben:{_items(meetings)}"
+            groups.append(
+                MoveGroup(
+                    f"- {when} ist Kundentag ({', '.join(onsite)}), {_count(len(meetings))} "
+                    "verschieben:",
+                    f"Kundentag {', '.join(onsite)}",
+                    meetings,
+                )
             )
         elif rule:
             min_minutes, min_meetings = rule
@@ -65,12 +94,17 @@ def move_suggestions(
                 start, end = block[0].start, max(m.end for m in block)
                 minutes = int((end - start).total_seconds() // 60)
                 if minutes >= min_minutes and len(block) >= min_meetings:
-                    lines.append(
-                        f"- {when}: interner Block {start:%H:%M}-{end:%H:%M} "
-                        f"({_count(len(block))}, {minutes} Min) verschieben, weil das "
-                        f"Stresslevel bei {stressed.label} {stressed.stress} ist:{_items(block)}"
+                    groups.append(
+                        MoveGroup(
+                            f"- {when}: interner Block {start:%H:%M}-{end:%H:%M} "
+                            f"({_count(len(block))}, {minutes} Min) verschieben, weil das "
+                            f"Stresslevel bei {stressed.label} {stressed.stress} ist:",
+                            f"interner Block {start:%H:%M}-{end:%H:%M}, "
+                            f"Stresslevel {stressed.stress} bei {stressed.label}",
+                            block,
+                        )
                     )
-    return lines
+    return groups
 
 
 def _blocks(meetings: list[Event]) -> list[list[Event]]:
@@ -94,7 +128,7 @@ def _items(meetings: list[Event]) -> str:
     parts = []
     for meeting in meetings:
         text = f"\n  - {meeting.start:%H:%M}-{meeting.end:%H:%M} {meeting.title.strip()}"
-        if len(meeting.attendee_domains) > LARGE_ROUND:
+        if is_large_round(meeting):
             text += f" (große Runde mit {len(meeting.attendee_domains)} Eingeladenen, eher aussetzen)"
         parts.append(text)
     return "".join(parts)

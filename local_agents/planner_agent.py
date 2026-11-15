@@ -5,6 +5,9 @@ Aufruf: python -m local_agents.planner_agent ["Frage"]
 
 Ohne Frage plant der Agent die kommende Woche. Je Termin entsteht eine Aufgabe
 "Vorbereitung", fertig ``lead_days`` Tage vor dem Termin (Profil, Standard 1).
+Interne Termine, die laut ``planning.py`` weichen sollten (Kundentag, interner
+Block bei Stress), bekommen zusaetzlich eine Aufgabe "Nachricht an <Organisator>",
+faellig ``move_lead_days`` Tage vorher (Standard 3), fruehestens heute.
 Ein zweiter Lauf legt nichts doppelt an: Er gleicht ab, was sich geaendert hat,
 und verwirft Aufgaben zu Terminen, die es nicht mehr gibt.
 
@@ -24,11 +27,13 @@ from local_agents.agent import MODEL_SETTINGS, answer_with_notes, format_notes, 
 from local_agents.calendar_agent import MAX_RANGE_DAYS, is_holiday_entry
 from local_agents.calendar_events import CalendarAccessError, Event, fetch_events, next_week
 from local_agents.holidays import WEEKDAYS
+from local_agents.planning import is_large_round, move_groups
 from local_agents.profile import Profile, ProfileError, load_profile
-from local_agents.store import CHANGED, NEW, UNCHANGED, Store, StoredEvent, Task
+from local_agents.store import CHANGED, DISCARDED, NEW, UNCHANGED, Store, StoredEvent, Task
 
 AGENT_NAME = "planner"
 PREPARATION = "vorbereitung"
+MOVE = "verschieben"
 DEFAULT_QUESTION = "Plane meine naechste Woche."
 
 
@@ -43,9 +48,30 @@ class Plan:
     tasks: list[Task]  # alle nicht verworfenen Aufgaben zu Terminen des Zeitraums
 
 
-def plan_events(events: list[Event], profile: Profile, store: Store, start: date, end: date) -> Plan:
-    """Schreibt Termine und ihre Vorbereitungsaufgaben in die Datenbank."""
+def plan_events(
+    events: list[Event],
+    profile: Profile,
+    store: Store,
+    start: date,
+    end: date,
+    today: date | None = None,
+) -> Plan:
+    """Schreibt Termine und ihre Aufgaben in die Datenbank.
+
+    ``today`` ist das frueheste Fertig-bis-Datum der Verschiebe-Aufgaben.
+    """
+
+    def context_of(event: Event) -> str:
+        return profile.classify(event.title, event.organizer_domain, event.attendee_domains)
+
+    # Warum ein Termin weichen sollte, je (Beginn, Ende, Titel).
+    move_reasons = {
+        (meeting.start, meeting.end, meeting.title): group.reason
+        for group in move_groups(events, profile, context_of)
+        for meeting in group.meetings
+    }
     counts: Counter = Counter()
+    discarded = 0
     kept: set[str] = set()
     seen: set[tuple] = set()
     for event in sorted(events, key=lambda e: (e.start, e.title)):
@@ -54,7 +80,7 @@ def plan_events(events: list[Event], profile: Profile, store: Store, start: date
             continue
         seen.add(duplicate)
         event_id = f"{event.uid or event.title}|{event.start.isoformat()}"
-        context = profile.classify(event.title, event.organizer_domain, event.attendee_domains)
+        context = context_of(event)
         store.upsert_event(
             StoredEvent(
                 event_id,
@@ -64,16 +90,42 @@ def plan_events(events: list[Event], profile: Profile, store: Store, start: date
                 context,
                 event.location,
                 len(event.attendee_domains),
+                event.organizer,
             )
         )
         day = event.start.date()
-        title = f"Vorbereitung: {event.title.strip()} ({WEEKDAYS[day.weekday()]} {event.start:%d.%m. %H:%M})"
+        what = f"{event.title.strip()} ({WEEKDAYS[day.weekday()]} {event.start:%d.%m. %H:%M})"
         due = day - timedelta(days=profile.lead_days)
-        counts[store.upsert_task(event_id, PREPARATION, title, context, due, AGENT_NAME)] += 1
+        counts[store.upsert_task(event_id, PREPARATION, f"Vorbereitung: {what}", context, due, AGENT_NAME)] += 1
+        reason = move_reasons.get(duplicate)
+        if reason:
+            due = day - timedelta(days=profile.move_lead_days)
+            if today:
+                due = max(due, min(today, day))
+            title = move_title(event, what, reason)
+            counts[store.upsert_task(event_id, MOVE, title, context, due, AGENT_NAME)] += 1
+        else:
+            # Der Termin muss nicht mehr weichen (Profil oder Kalender geaendert).
+            discarded += store.discard_task(event_id, MOVE)
         kept.add(event_id)
-    discarded = store.drop_events(start, end, kept)
-    tasks = [task for task in store.tasks() if task.event_id in kept]
+    discarded += store.drop_events(start, end, kept)
+    tasks = [
+        task for task in store.tasks() if task.event_id in kept and task.status != DISCARDED
+    ]
     return Plan(start, end, counts, discarded, tasks)
+
+
+def move_title(event: Event, what: str, reason: str) -> str:
+    """Titel der Aufgabe, den Termin zu verschieben oder dafuer abzusagen."""
+    if event.organizer_is_me:
+        return f"Selbst verschieben: {what}, weil {reason}"
+    who = event.organizer or "Organisator"
+    if is_large_round(event):
+        return (
+            f"Absage an {who}: {what}, weil {reason} "
+            f"(große Runde mit {len(event.attendee_domains)} Eingeladenen)"
+        )
+    return f"Nachricht an {who}: {what} verschieben, weil {reason}"
 
 
 def needs_task(event: Event, profile: Profile) -> bool:
@@ -126,7 +178,9 @@ def instructions(ctx: RunContext[PlannerDeps]) -> str:
     monday, sunday = next_week(today)
     return (
         "Du bist ein Planungs-Assistent. Rufe plan_week fuer den gewuenschten "
-        "Zeitraum auf; das legt die Aufgaben in der Datenbank an. "
+        "Zeitraum auf; das legt die Aufgaben in der Datenbank an: je Termin eine "
+        "Vorbereitung und fuer interne Termine, die dem Kundenprojekt weichen "
+        "sollten, eine Nachricht an den Organisator. "
         f"Heute ist {WEEKDAYS[today.weekday()]}, {today.isoformat()}. "
         f"Die naechste Woche reicht von {monday.isoformat()} bis {sunday.isoformat()}. "
         "Sage danach in zwei, drei Saetzen auf Deutsch, was angelegt wurde und an "
@@ -137,7 +191,7 @@ def instructions(ctx: RunContext[PlannerDeps]) -> str:
 
 @planner_agent.tool
 def plan_week(ctx: RunContext[PlannerDeps], start: date, end: date) -> str:
-    """Legt fuer alle Termine des Zeitraums Vorbereitungsaufgaben in der Datenbank an.
+    """Legt fuer alle Termine des Zeitraums Aufgaben in der Datenbank an.
 
     Args:
         start: Erster Tag im Format JJJJ-MM-TT.
@@ -151,7 +205,7 @@ def plan_week(ctx: RunContext[PlannerDeps], start: date, end: date) -> str:
 
 
 def _plan(deps: PlannerDeps, start: date, end: date) -> str:
-    plan = plan_events(deps.fetch(start, end), deps.profile, deps.store, start, end)
+    plan = plan_events(deps.fetch(start, end), deps.profile, deps.store, start, end, deps.today)
     deps.plans.append(plan)
     heading = f"Aufgaben für {start:%d.%m.}–{end:%d.%m.%Y} ({plan_summary(plan)})"
     deps.notes[heading] = plan_lines(plan, deps.profile) or ["- keine Aufgaben"]
@@ -159,10 +213,14 @@ def _plan(deps: PlannerDeps, start: date, end: date) -> str:
     days = ", ".join(
         f"{WEEKDAYS[day.weekday()]} {day:%d.%m.}: {count}" for day, count in sorted(per_day.items())
     )
-    return (
+    moves = sum(task.kind == MOVE for task in plan.tasks)
+    text = (
         f"Aufgaben in der Datenbank: {plan_summary(plan)}. "
         f"Faellig je Tag: {days or 'nichts'}."
     )
+    if moves:
+        text += f" Davon {moves} Nachrichten, um interne Termine zu verschieben."
+    return text
 
 
 def run(question: str, deps: PlannerDeps, model) -> str:

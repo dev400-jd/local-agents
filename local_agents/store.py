@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS events (
     context    TEXT NOT NULL,      -- Kontext-id aus dem Profil
     location   TEXT NOT NULL DEFAULT '',
     attendees  INTEGER NOT NULL DEFAULT 0,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    organizer  TEXT NOT NULL DEFAULT ''   -- Anzeigename des Einladenden
 );
 CREATE TABLE IF NOT EXISTS tasks (
     id         INTEGER PRIMARY KEY,
@@ -70,6 +71,7 @@ class StoredEvent:
     context: str
     location: str = ""
     attendees: int = 0
+    organizer: str = ""
 
 
 @dataclass(frozen=True)
@@ -102,6 +104,9 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
         self.db.executescript(SCHEMA)
+        # Datenbanken aus der Zeit vor der Spalte nachziehen.
+        if "organizer" not in {row["name"] for row in self.db.execute("PRAGMA table_info(events)")}:
+            self.db.execute("ALTER TABLE events ADD COLUMN organizer TEXT NOT NULL DEFAULT ''")
 
     def close(self) -> None:
         self.db.close()
@@ -111,11 +116,12 @@ class Store:
     def upsert_event(self, event: StoredEvent) -> None:
         with self.db:
             self.db.execute(
-                "INSERT INTO events (id, title, start, end, context, location, attendees, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "INSERT INTO events (id, title, start, end, context, location, attendees, "
+                "organizer, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT (id) DO UPDATE SET title = excluded.title, start = excluded.start, "
                 "end = excluded.end, context = excluded.context, location = excluded.location, "
-                "attendees = excluded.attendees, updated_at = excluded.updated_at",
+                "attendees = excluded.attendees, organizer = excluded.organizer, "
+                "updated_at = excluded.updated_at",
                 (
                     event.id,
                     event.title,
@@ -124,6 +130,7 @@ class Store:
                     event.context,
                     event.location,
                     event.attendees,
+                    event.organizer,
                     _now(),
                 ),
             )
@@ -143,6 +150,7 @@ class Store:
                 row["context"],
                 row["location"],
                 row["attendees"],
+                row["organizer"],
             )
             for row in rows
         ]
@@ -172,7 +180,8 @@ class Store:
     ) -> str:
         """Legt die Aufgabe einer Art zu einem Termin an oder gleicht sie ab.
 
-        Status und Ergebnis bleiben erhalten. Gibt NEW, CHANGED oder UNCHANGED zurueck.
+        Status und Ergebnis bleiben erhalten; nur eine verworfene Aufgabe wird
+        wieder geoeffnet. Gibt NEW, CHANGED oder UNCHANGED zurueck.
         """
         row = self.db.execute(
             "SELECT * FROM tasks WHERE event_id = ? AND kind = ?", (event_id, kind)
@@ -187,13 +196,25 @@ class Store:
                 )
                 return NEW
             current = (row["title"], row["context"], row["due_date"])
-            if current == (title, context, due_date.isoformat()):
+            status = OPEN if row["status"] == DISCARDED else row["status"]
+            if current == (title, context, due_date.isoformat()) and status == row["status"]:
                 return UNCHANGED
             self.db.execute(
-                "UPDATE tasks SET title = ?, context = ?, due_date = ?, updated_at = ? WHERE id = ?",
-                (title, context, due_date.isoformat(), now, row["id"]),
+                "UPDATE tasks SET title = ?, context = ?, due_date = ?, status = ?, updated_at = ? "
+                "WHERE id = ?",
+                (title, context, due_date.isoformat(), status, now, row["id"]),
             )
             return CHANGED
+
+    def discard_task(self, event_id: str, kind: str) -> bool:
+        """Verwirft die noch nicht erledigte Aufgabe einer Art zu einem Termin."""
+        with self.db:
+            cursor = self.db.execute(
+                "UPDATE tasks SET status = ?, updated_at = ? "
+                "WHERE event_id = ? AND kind = ? AND status IN (?, ?)",
+                (DISCARDED, _now(), event_id, kind, OPEN, IN_PROGRESS),
+            )
+        return cursor.rowcount == 1
 
     def tasks(
         self,

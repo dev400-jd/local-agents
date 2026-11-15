@@ -32,6 +32,11 @@ class Event:
     # ohne Namen oder Adressen.
     organizer_domain: str = ""
     attendee_domains: tuple[str, ...] = ()
+    # Anzeigename des Organisators, fuer Aufgaben wie "Nachricht an ...".
+    # Bleibt in der Datenbank und in Listen, die der Code druckt; das Modell
+    # bekommt ihn nicht.
+    organizer: str = ""
+    organizer_is_me: bool = False
     # Kennung des Termins im Kalender; Serientermine teilen sie sich.
     uid: str = ""
 
@@ -104,6 +109,8 @@ def fetch_events(start: date, end: date) -> list[Event]:
             calendar=str(item.calendar().title() or ""),
             uid=str(item.calendarItemExternalIdentifier() or item.eventIdentifier() or ""),
             organizer_domain=_domain(item.organizer()),
+            organizer=_name(item.organizer()),
+            organizer_is_me=bool(item.organizer() is not None and item.organizer().isCurrentUser()),
             attendee_domains=tuple(
                 domain for domain in map(_domain, item.attendees() or []) if domain
             ),
@@ -117,6 +124,11 @@ def _domain(participant) -> str:
     """Mail-Domain eines EventKit-Teilnehmers, leer ohne Mailadresse."""
     url = "" if participant is None else str(participant.URL() or "")
     return url.rsplit("@", 1)[1].lower() if "@" in url else ""
+
+
+def _name(participant) -> str:
+    """Anzeigename eines EventKit-Teilnehmers, leer ohne Namen."""
+    return "" if participant is None else str(participant.name() or "").strip()
 
 
 def _request_access(store) -> None:

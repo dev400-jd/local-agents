@@ -76,6 +76,35 @@ class TestStore(unittest.TestCase):
             self.store.set_status(1, "vielleicht")
         self.assertFalse(self.store.set_status(99, DONE))
 
+    def test_discard_task_and_reopen_on_next_upsert(self) -> None:
+        EVENT = event("a", 18)
+        self.store.upsert_event(EVENT)
+        self.store.upsert_task(EVENT.id, "verschieben", "Nachricht", "intern", date(2026, 11, 15), "planner")
+        self.assertTrue(self.store.discard_task(EVENT.id, "verschieben"))
+        self.assertFalse(self.store.discard_task(EVENT.id, "verschieben"))
+        again = self.store.upsert_task(EVENT.id, "verschieben", "Nachricht", "intern", date(2026, 11, 15), "planner")
+        self.assertEqual((again, self.store.tasks()[0].status), (CHANGED, OPEN))
+
+    def test_old_database_gets_the_organizer_column(self) -> None:
+        import sqlite3
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "alt.db"
+            old = sqlite3.connect(path)
+            old.execute(
+                "CREATE TABLE events (id TEXT PRIMARY KEY, title TEXT NOT NULL, start TEXT NOT NULL, "
+                "end TEXT NOT NULL, context TEXT NOT NULL, location TEXT NOT NULL DEFAULT '', "
+                "attendees INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)"
+            )
+            old.execute("INSERT INTO events VALUES ('a', 'Alt', '2026-11-16T09:00:00', '2026-11-16T09:30:00', 'intern', '', 0, 'x')")
+            old.commit()
+            old.close()
+            store = Store(path)
+            self.addCleanup(store.close)
+            self.assertEqual(store.events(date(2026, 11, 16), date(2026, 11, 16))[0].organizer, "")
+
     def test_runs_are_logged(self) -> None:
         run_id = self.store.start_run("planner")
         self.store.finish_run(run_id, "ok", "2 neu")

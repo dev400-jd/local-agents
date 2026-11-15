@@ -104,6 +104,112 @@ class TestPlanEvents(unittest.TestCase):
         self.assertEqual((plan.tasks[0].title, plan.tasks[0].status), ("Vorbereitung: Daily neu (Mo 16.11. 09:00)", DONE))
 
 
+ONSITE = Profile(
+    contexts=(
+        PROFILE.contexts[0],
+        Context(
+            "kunde-acme",
+            "kunde",
+            "Kunde ACME",
+            domains=frozenset({"acme.example"}),
+            onsite_days=frozenset({2}),
+        ),
+    )
+)
+
+
+def internal(day: int, clock: str, title: str, **extra) -> Event:
+    import dataclasses
+
+    return dataclasses.replace(meeting(day, clock, title), **extra)
+
+
+class TestMoveTasks(unittest.TestCase):
+    """Interne Termine am Kundentag (Mittwoch) bekommen eine Nachricht-Aufgabe."""
+
+    def setUp(self) -> None:
+        self.store = Store(":memory:")
+        self.addCleanup(self.store.close)
+
+    def plan(self, events: list[Event], profile: Profile = ONSITE, today: date | None = None):
+        return plan_events(events, profile, self.store, START, END, today)
+
+    def moves(self, plan) -> list:
+        return [task for task in plan.tasks if task.kind == "verschieben"]
+
+    def test_message_to_organizer_is_due_days_ahead(self) -> None:
+        plan = self.plan([internal(18, "10:00", "Jour fixe", organizer="Erika Muster"), DAILY])
+        (move,) = self.moves(plan)
+        self.assertEqual(
+            move.title,
+            "Nachricht an Erika Muster: Jour fixe (Mi 18.11. 10:00) verschieben, "
+            "weil Kundentag Kunde ACME",
+        )
+        self.assertEqual((move.due_date, move.context), (date(2026, 11, 15), "intern"))
+        # Die Vorbereitung bleibt daneben bestehen, der Kundentermin bekommt nur sie.
+        self.assertEqual(len(plan.tasks), 3)
+
+    def test_buffer_from_profile_and_not_before_today(self) -> None:
+        import dataclasses
+
+        event = internal(18, "10:00", "Jour fixe")
+        plan = self.plan([event], dataclasses.replace(ONSITE, move_lead_days=5))
+        self.assertEqual(self.moves(plan)[0].due_date, date(2026, 11, 13))
+        plan = self.plan([event], dataclasses.replace(ONSITE, move_lead_days=5), today=date(2026, 11, 15))
+        self.assertEqual(self.moves(plan)[0].due_date, date(2026, 11, 15))
+
+    def test_own_meeting_unknown_organizer_and_large_round(self) -> None:
+        many = tuple(["beispiel.de"] * 12)
+        plan = self.plan(
+            [
+                internal(18, "09:00", "Eigener", organizer="Ich", organizer_is_me=True),
+                internal(18, "10:00", "Ohne Namen"),
+                internal(18, "11:00", "Alle", organizer="Erika Muster", attendee_domains=many),
+            ]
+        )
+        self.assertEqual(
+            [task.title for task in self.moves(plan)],
+            [
+                "Selbst verschieben: Eigener (Mi 18.11. 09:00), weil Kundentag Kunde ACME",
+                "Nachricht an Organisator: Ohne Namen (Mi 18.11. 10:00) verschieben, "
+                "weil Kundentag Kunde ACME",
+                "Absage an Erika Muster: Alle (Mi 18.11. 11:00), weil Kundentag Kunde ACME "
+                "(große Runde mit 12 Eingeladenen)",
+            ],
+        )
+
+    def test_block_under_stress_gets_move_tasks(self) -> None:
+        import dataclasses
+
+        stressed = dataclasses.replace(
+            ONSITE, contexts=(ONSITE.contexts[0], dataclasses.replace(ONSITE.contexts[1], stress="hoch", onsite_days=frozenset()))
+        )
+        long = internal(17, "10:00", "Workshop", end=datetime(2026, 11, 17, 11, 30))
+        (move,) = self.moves(self.plan([long], stressed))
+        self.assertEqual(
+            move.title,
+            "Nachricht an Organisator: Workshop (Di 17.11. 10:00) verschieben, "
+            "weil interner Block 10:00-11:30, Stresslevel hoch bei Kunde ACME",
+        )
+        self.assertEqual(move.due_date, date(2026, 11, 14))
+
+    def test_task_is_discarded_and_reopened_with_the_rule(self) -> None:
+        event = internal(18, "10:00", "Jour fixe")
+        self.plan([event])
+        plan = self.plan([event], PROFILE)  # ohne Kundentag
+        self.assertEqual((plan.discarded, self.moves(plan)), (1, []))
+        plan = self.plan([event])
+        self.assertEqual((plan.counts[CHANGED], len(self.moves(plan))), (1, 1))
+        self.assertEqual(self.moves(plan)[0].status, OPEN)
+
+    def test_second_run_changes_nothing(self) -> None:
+        events = [internal(18, "10:00", "Jour fixe", organizer="Erika Muster")]
+        self.plan(events, today=date(2026, 11, 14))
+        plan = self.plan(events, today=date(2026, 11, 14))
+        self.assertEqual((plan.counts[UNCHANGED], plan.counts[NEW], plan.discarded), (2, 0, 0))
+        self.assertEqual(self.store.events(START, END)[0].organizer, "Erika Muster")
+
+
 def scripted_model(call_tool: bool = True) -> FunctionModel:
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         for part in messages[-1].parts:
@@ -141,6 +247,12 @@ class TestPlannerAgent(unittest.TestCase):
         output = run("Frage", self.deps, scripted_model(call_tool=False))
         self.assertTrue(output.startswith("Ich plane nichts.\n\n**Aufgaben für 16.11.–22.11.2026"), output)
         self.assertEqual(len(self.store.tasks()), 2)
+
+    def test_reports_move_tasks_to_the_model(self) -> None:
+        self.deps.profile = ONSITE
+        output = run("Frage", self.deps, scripted_model())
+        self.assertIn("Davon 2 Nachrichten, um interne Termine zu verschieben.", output)
+        self.assertIn("  - #3 Nachricht an Organisator: Jour fixe (Mi 18.11. 10:00) verschieben", output)
 
     def test_logs_the_run(self) -> None:
         run("Frage", self.deps, scripted_model())
