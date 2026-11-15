@@ -77,6 +77,10 @@ class Profile:
     # fuer Piper-Stimmen mit mehreren Sprechern.
     voice_speed: float = 1.0
     voice_speaker: int | None = None
+    # Spracheingabe der Antwort: an/aus, Whisper-Modell und Sprache.
+    listen_enabled: bool = True
+    listen_model: str = "large-v3-turbo"
+    listen_language: str = "de"
 
     def context_ids(self) -> list[str]:
         """Alle Werte, die ``classify`` liefern kann."""
@@ -227,6 +231,9 @@ def load_profile(path: Path | None = None) -> Profile:
         voice_model=str(speech.get("model", "de_DE-thorsten-high")),
         voice_speed=float(speed),
         voice_speaker=speaker,
+        listen_enabled=bool(data.get("listen", {}).get("enabled", True)),
+        listen_model=str(data.get("listen", {}).get("model", "large-v3-turbo")),
+        listen_language=str(data.get("listen", {}).get("language", "de")),
         plan_skip=tuple(word.casefold() for word in planning.get("skip", [])),
         state=state,
         name=person.get("name", ""),

@@ -60,3 +60,10 @@ enabled = true
 model = "de_DE-thorsten-high"
 speed = 1.0
 voice = "Anna"
+
+# Die Antwort auf die Rueckfrage wird gesprochen und lokal erkannt (Whisper).
+# Kleinere, schnellere Modelle: "small", "medium". Siehe README.
+[listen]
+enabled = true
+model = "large-v3-turbo"
+language = "de"

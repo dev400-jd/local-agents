@@ -96,6 +96,13 @@ class TestPlanEvents(unittest.TestCase):
         self.assertEqual(statuses, {"Vorbereitung: Daily": OPEN, "Vorbereitung: Jour fixe": DISCARDED})
         self.assertEqual(len(plan.tasks), 1)
 
+    def test_task_removed_by_the_user_stays_out(self) -> None:
+        self.plan(WEEK)
+        self.store.set_status(2, "abgelehnt")
+        plan = self.plan(WEEK)
+        self.assertEqual([task.id for task in plan.tasks], [1])
+        self.assertEqual(self.store.tasks()[1].status, "abgelehnt")
+
     def test_renamed_meeting_updates_task_and_keeps_status(self) -> None:
         self.plan([meeting(16, "09:00", "Daily", uid="x")])
         self.store.set_status(self.store.tasks()[0].id, DONE)

@@ -18,6 +18,10 @@ und Modellerfahrungen stehen im Schwesterprojekt `opencode-ollama-agents`
 | Planungs-Agent | `local_agents/planner_agent.py` | leitet aus Terminen Aufgaben mit Fertig-bis-Datum ab |
 | Agenten-Datenbank | `local_agents/store.py` | SQLite-Datei mit Terminen, Aufgaben und Läufen |
 | Aufgaben-Befehl | `local_agents/tasks.py` | Aufgaben ansehen und abhaken |
+| Kurzfassung | `local_agents/briefing.py` | Überblick über die offenen Aufgaben in wenigen Sätzen, zum Vorlesen |
+| Sprachausgabe | `local_agents/voice.py` | liest Text mit dem lokalen Sprachmodell Piper vor |
+| Spracheingabe | `local_agents/listen.py` | nimmt eine gesprochene Antwort auf und erkennt sie lokal mit Whisper |
+| Rückmeldung | `local_agents/feedback.py` | setzt die Antwort auf den Plan um: Aufgaben herausnehmen oder ergänzen |
 
 ## Einrichtung
 
@@ -26,8 +30,11 @@ python3 -m venv .venv
 .venv/bin/pip install -e .
 ```
 
-Das installiert auch das lokale Sprachmodell Piper für die gesprochene
-Kurzfassung des Planungs-Agenten ([Stimme anpassen](#stimme-anpassen)).
+Das installiert auch die lokale Sprachausgabe (Piper), die Mikrofonaufnahme
+(`sounddevice`) und die Spracherkennung (Whisper über `pywhispercpp`) für den
+Planungs-Agenten ([Stimme anpassen](#stimme-anpassen),
+[Gesprochene Antwort](#gesprochene-antwort)). Nach einem `git pull` mit neuen
+Abhängigkeiten denselben Befehl noch einmal ausführen.
 
 ## Tests
 
@@ -279,11 +286,105 @@ Satzbausteinen (`local_agents/briefing.py`). Vom lokalen Modell geschrieben
 hatte er Grammatikfehler und einmal eine erfundene Uhrzeit. Ein lokales
 Sprachmodell (Piper) spricht ihn (`local_agents/voice.py`), und er steht zum
 Mitlesen unter „Kurzfassung (wird vorgelesen)". Nichts davon verlässt den
-Rechner. Die Rückfrage wird bisher nur gestellt; eine Antwort wertet der Agent
-noch nicht aus.
+Rechner.
 
 ```bash
-.venv/bin/python -m local_agents.planner_agent --stumm   # ohne Kurzfassung und Ton
+.venv/bin/python -m local_agents.planner_agent --stumm   # Kurzfassung nur als Text, ohne Ton
+```
+
+### Rückmeldung auf den Plan
+
+Nach der Rückfrage wartet der Agent auf deine Antwort. Mit Ton sprichst du sie
+([Gesprochene Antwort](#gesprochene-antwort)), mit `--stumm` tippst du sie:
+
+```text
+Deine Antwort (Enter = passt so): die Nachricht an Erika raus, dazu bis Dienstag Folien bauen
+- raus: #18 Nachricht an Erika Muster: Jour fixe (Mi 18.11. 10:00) verschieben, weil Kundentag Kunde ACME
+- neu: #21 Folien bauen, fertig bis Di 17.11.2026
+Alles klar, ich habe eine Aufgabe herausgenommen und eine Aufgabe ergänzt.
+```
+
+- Zustimmung („ja", „passt so", Enter) lässt den Plan, wie er ist. Das erkennt
+  der Code, ohne das Modell zu fragen.
+- Alles andere übersetzt das lokale Modell in Änderungen: welche Aufgaben raus
+  sollen und welche dazukommen, mit Datum, wenn du eines nennst („bis
+  Dienstag", „morgen"); ohne Datum ist die neue Aufgabe heute fällig.
+- Der Code führt nur aus, was zu einer vorhandenen Aufgabe passt, und nennt
+  jede Änderung einzeln, damit ein Missverständnis auffällt. Was das Modell
+  nicht zuordnen kann, steht unter „nicht verstanden" und ändert nichts.
+- Herausgenommene Aufgaben bekommen den Status `abgelehnt`; der Planungs-Agent
+  legt sie beim nächsten Lauf nicht wieder an. Das gilt für diesen einen
+  Termin, nicht für die ganze Serie; dauerhaft ausnehmen geht mit `skip` im
+  Profil. Zurücknehmen: `python -m local_agents.tasks offen 18`.
+- Ergänzte Aufgaben haben die Art `manuell` und hängen an keinem Termin.
+
+Läuft der Agent ohne Terminal (etwa später als geplanter Lauf), entfällt die
+Rückfrage.
+
+### Gesprochene Antwort
+
+Nach der vorgelesenen Rückfrage hört der Agent zu:
+
+```text
+Ich höre zu … (Stille beendet die Aufnahme)
+Verstanden: Die Nachricht an Erika raus, dazu bis Dienstag Folien bauen.
+- raus: #18 Nachricht an Erika Muster: …
+```
+
+- Die Aufnahme beginnt sofort und endet nach etwa anderthalb Sekunden Stille
+  im Anschluss an das Gesprochene, spätestens nach 45 Sekunden. Sagst du acht
+  Sekunden lang nichts, bricht sie ab.
+- Hört der Agent nichts oder scheitert die Spracheingabe, erscheint die
+  Eingabezeile zum Tippen.
+- Der erkannte Text steht unter „Verstanden:", bevor er ausgewertet wird.
+- Beim ersten Mal fragt macOS nach dem Mikrofonzugriff für das Terminal
+  (später: Systemeinstellungen → Datenschutz & Sicherheit → Mikrofon).
+- Das Whisper-Modell wird beim ersten Gebrauch einmalig heruntergeladen, nach
+  `~/.local/share/local-agents/whisper` (anderer Ordner:
+  `LOCAL_AGENTS_WHISPER`). Ton und Text verlassen den Rechner nicht.
+
+```toml
+[listen]
+enabled = true             # false: Antwort immer tippen
+model = "large-v3-turbo"   # Whisper-Modell
+language = "de"
+```
+
+| `model` | Größe | Anmerkung |
+|---|---|---|
+| `large-v3-turbo` | ca. 1,6 GB | Standard, erkennt Namen und englische Fachwörter am besten |
+| `medium` | ca. 1,5 GB | |
+| `small` | ca. 470 MB | schneller, mehr Fehler bei Namen |
+| `base`, `tiny` | 140 MB, 75 MB | nur zum Ausprobieren |
+
+Nur die Spracheingabe testen (nimmt auf und zeigt den erkannten Text):
+
+```bash
+.venv/bin/python -m local_agents.listen
+```
+
+Was die Spracheingabe zusätzlich mitbringt:
+
+| Zusatz | Wofür | Woher |
+|---|---|---|
+| `sounddevice` | Mikrofonaufnahme (bringt PortAudio mit) | Abhängigkeit, kommt mit `pip install -e .` |
+| `pywhispercpp` | Spracherkennung mit Whisper (whisper.cpp) | Abhängigkeit, kommt mit `pip install -e .` |
+| `numpy` | Lautstärke je Block messen, Aufnahme an Whisper übergeben | Abhängigkeit |
+| Whisper-Modell | die eigentliche Erkennung | einmaliger Download beim ersten Gebrauch |
+| Mikrofonfreigabe | macOS erlaubt dem Terminal die Aufnahme | Dialog beim ersten Gebrauch |
+
+Wann die Aufnahme endet, entscheidet `Endpointer` in `local_agents/listen.py`
+aus der Lautstärke: Die ersten 0,3 Sekunden messen das Grundrauschen; als
+Sprache gilt, was dreimal so laut ist (mindestens ein fester Sockel) und zwei
+Blöcke von je 0,1 Sekunden anhält. Bricht die Aufnahme bei dir zu früh ab oder
+endet sie in lauter Umgebung nicht, sind das die Stellschrauben: `silence`,
+`wait` und `limit` am `Endpointer` sowie `NOISE_FACTOR` und `MIN_THRESHOLD`.
+
+Aufgaben, die du beim Ausprobieren herausgenommen hast, holst du so zurück:
+
+```bash
+.venv/bin/python -m local_agents.tasks alle        # herausgenommene tragen den Zusatz „abgelehnt"
+.venv/bin/python -m local_agents.tasks offen 17    # wieder aufnehmen
 ```
 
 ### Stimme anpassen
@@ -340,6 +441,7 @@ der Agent trotzdem die kommende Woche.
 .venv/bin/python -m local_agents.tasks alle          # auch erledigte und verworfene
 .venv/bin/python -m local_agents.tasks erledigt 12   # Aufgabe #12 abhaken
 .venv/bin/python -m local_agents.tasks offen 12      # wieder öffnen
+.venv/bin/python -m local_agents.tasks abgelehnt 12  # herausnehmen, wird nicht neu angelegt
 ```
 
 ### Die Datenbank
@@ -354,7 +456,8 @@ Repos, weil Termintitel und Kundennamen darin stehen. Anderer Pfad:
 | `tasks` | Aufgaben: Art (`kind`), Titel, Kontext, Fertig-bis-Datum, Status, zuständiger Agent, Ergebnis, zugehöriger Termin |
 | `runs` | Protokoll: welcher Agent wann lief, mit Status und Kurzfassung |
 
-Status einer Aufgabe: `offen`, `in_arbeit`, `erledigt`, `verworfen`. Die
+Status einer Aufgabe: `offen`, `in_arbeit`, `erledigt`, `verworfen` (Termin
+entfallen) und `abgelehnt` (von dir herausgenommen). Die
 Spalten `agent` und `result` sind für Agenten gedacht, die Aufgaben später
 selbst erledigen; bisher füllt sie niemand. Je Termin und Art gibt es höchstens
 eine Aufgabe, daran erkennt der Planungs-Agent, was schon da ist.
@@ -398,6 +501,7 @@ Felder der Datei:
 | `[planning]` `lead_days` | Planungs-Agent: Aufgaben sind so viele Tage vor dem Termin fertig (Standard 1) |
 | `[planning]` `move_lead_days` | Planungs-Agent: Vorlauf der Aufgaben „Nachricht an …, Termin verschieben" (Standard 3) |
 | `[voice]` `enabled`, `model`, `speed`, `speaker`, `voice` | Sprachausgabe, siehe [Stimme anpassen](#stimme-anpassen) |
+| `[listen]` `enabled`, `model`, `language` | Spracheingabe, siehe [Gesprochene Antwort](#gesprochene-antwort) |
 | `[planning]` `skip` | Planungs-Agent: Stichwörter im Titel, für die keine Aufgabe entsteht |
 
 Eine fehlerhafte Datei (unbekanntes Bundesland, falsches `kind`, doppelte `id`)
@@ -543,3 +647,13 @@ oder Tabelle) schwankt von Lauf zu Lauf.
 - Planungs-Agent gegen echten Kalender und `gpt-oss:20b`: legt für die Woche
   16.–22.11.2026 16 Aufgaben an; ein zweiter Lauf meldet 16 unverändert
   (2026-11-14).
+- Rückmeldung auf den Plan mit `gpt-oss:20b` gegen eine Kopie der echten
+  Datenbank (2026-11-15): sieben verschiedene getippte Antworten, darunter
+  „alle Vorbereitungen für Montag raus" und eine absichtlich unklare, je 1 bis
+  10 Sekunden. Sechs wurden auf Anhieb richtig umgesetzt; bei „bis Dienstag"
+  fehlte zuerst das Datum, nach geschärften Vorgaben stimmte es. Der Dialog im
+  Terminal (getippte Antwort) ist vom Nutzer von Hand erprobt.
+- Spracheingabe (`listen.py`): vom Nutzer mit Mikrofon und Whisper
+  (`large-v3-turbo`) erprobt, die Erkennung funktioniert (2026-11-15). Die
+  Schwellen für Sprechbeginn und Stille sind gewählt, nicht in lauter Umgebung
+  erprobt; die automatischen Tests stellen die Aufnahme nach.

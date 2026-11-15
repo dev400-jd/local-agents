@@ -3,9 +3,14 @@ und schreibt sie in die Agenten-Datenbank.
 
 Aufruf: python -m local_agents.planner_agent [--stumm] ["Frage"]
 
-Nach dem Plan liest der Agent eine kurze Uebersicht der wichtigsten Aufgaben
-vor (lokales Sprachmodell, ersatzweise macOS-Stimme); ``--stumm`` oder ``[voice] enabled = false`` im
-Profil schaltet das ab.
+Nach dem Plan folgt eine kurze Uebersicht der wichtigsten Aufgaben mit der
+Rueckfrage "Passt das so fuer dich?". Ein Ja laesst alles stehen, sonst nimmt
+der Agent Aufgaben heraus oder ergaenzt welche (``feedback.py``). Die Uebersicht
+wird vorgelesen und die Antwort gesprochen (``voice.py``, ``listen.py``, beides
+lokal). Mit ``--stumm`` oder ``[voice] enabled = false`` im Profil bleibt es
+still: Die Uebersicht steht nur im Terminal, die Antwort wird getippt. Getippt
+wird auch, wenn die Spracheingabe nichts hoert oder nicht funktioniert.
+Ohne Terminal (etwa als geplanter Lauf) entfaellt die Rueckfrage.
 
 Ohne Frage plant der Agent die kommende Woche. Je Termin entsteht eine Aufgabe
 "Vorbereitung", fertig ``lead_days`` Tage vor dem Termin (Profil, Standard 1).
@@ -27,7 +32,7 @@ from datetime import date, timedelta
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 
-from local_agents import voice
+from local_agents import feedback, listen, voice
 from local_agents.agent import MODEL_SETTINGS, answer_with_notes, format_notes, ollama_model
 from local_agents.briefing import spoken_summary
 from local_agents.calendar_agent import MAX_RANGE_DAYS, is_holiday_entry
@@ -38,6 +43,7 @@ from local_agents.profile import Profile, ProfileError, load_profile
 from local_agents.store import (
     CHANGED,
     DISCARDED,
+    REJECTED,
     IN_PROGRESS,
     NEW,
     OPEN,
@@ -126,7 +132,9 @@ def plan_events(
         kept.add(event_id)
     discarded += store.drop_events(start, end, kept)
     tasks = [
-        task for task in store.tasks() if task.event_id in kept and task.status != DISCARDED
+        task
+        for task in store.tasks()
+        if task.event_id in kept and task.status not in (DISCARDED, REJECTED)
     ]
     return Plan(start, end, counts, discarded, tasks)
 
@@ -265,6 +273,24 @@ def briefing(deps: PlannerDeps) -> str:
     return spoken_summary(tasks, events, deps.today)
 
 
+def hear(profile: Profile, listener=listen.listen) -> str:
+    """Gesprochene Antwort als Text; leer, wenn stattdessen getippt werden soll."""
+    print("\nIch höre zu … (Stille beendet die Aufnahme)", flush=True)
+    try:
+        answer = listener(profile.listen_model, profile.listen_language)
+    except listen.ListenError as exc:
+        print(f"(Spracheingabe nicht möglich: {exc})", file=sys.stderr)
+        return ""
+    except KeyboardInterrupt:
+        print()
+        return ""
+    if answer:
+        print(f"Verstanden: {answer}", flush=True)
+    else:
+        print("Ich habe nichts gehört.", flush=True)
+    return answer
+
+
 def main(argv: list[str]) -> int:
     args = [arg for arg in argv[1:] if arg != "--stumm"]
     silent = len(args) < len(argv) - 1
@@ -275,25 +301,45 @@ def main(argv: list[str]) -> int:
     try:
         profile = load_profile()
         deps = PlannerDeps(today=date.today(), store=Store(), profile=profile)
-        output = run(question, deps, ollama_model())
+        model = ollama_model()
+        output = run(question, deps, model)
     except (CalendarAccessError, ProfileError) as exc:
         print(exc, file=sys.stderr)
         return 1
     print(output, flush=True)
-    if silent or not profile.voice_enabled:
-        return 0
-    # Erst der ganze Plan zum Lesen, dann die Uebersicht zum Hoeren.
+    aloud = not silent and profile.voice_enabled
+
+    def say(text: str) -> None:
+        if not aloud:
+            return
+        spoke = voice.speak_with_profile(text, profile)
+        if not spoke:
+            print("(Sprachausgabe nicht verfügbar.)", file=sys.stderr)
+        elif spoke == "say" and profile.voice_model:
+            print(
+                "(Piper-Stimme nicht verfügbar, macOS-Stimme benutzt. "
+                "Siehe README, Abschnitt Stimme anpassen.)",
+                file=sys.stderr,
+            )
+
+    # Erst der ganze Plan zum Lesen, dann die Uebersicht mit der Rueckfrage.
     summary = briefing(deps)
-    print(f"\n**Kurzfassung (wird vorgelesen)**\n{summary}", flush=True)
-    spoke = voice.speak_with_profile(summary, profile)
-    if not spoke:
-        print("(Sprachausgabe nicht verfügbar.)", file=sys.stderr)
-    elif spoke == "say" and profile.voice_model:
-        print(
-            "(Piper-Stimme nicht verfügbar, macOS-Stimme benutzt. "
-            "Siehe README, Abschnitt Stimme anpassen.)",
-            file=sys.stderr,
-        )
+    print(f"\n**Kurzfassung{' (wird vorgelesen)' if aloud else ''}**\n{summary}", flush=True)
+    say(summary)
+    if not sys.stdin.isatty():
+        return 0
+    answer = ""
+    if aloud and profile.listen_enabled:
+        answer = hear(profile)
+    if not answer:
+        try:
+            answer = input("\nDeine Antwort (Enter = passt so): ")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 0
+    outcome = feedback.handle(answer, deps.store, profile, deps.today, model)
+    print("\n".join([*outcome.lines, outcome.spoken]), flush=True)
+    say(outcome.spoken)
     return 0
 
 

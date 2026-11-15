@@ -19,7 +19,10 @@ from pathlib import Path
 DEFAULT_DB_PATH = Path.home() / ".local" / "share" / "local-agents" / "agents.db"
 
 OPEN, IN_PROGRESS, DONE, DISCARDED = "offen", "in_arbeit", "erledigt", "verworfen"
-STATUSES = (OPEN, IN_PROGRESS, DONE, DISCARDED)
+# Vom Nutzer herausgenommen. Anders als eine verworfene Aufgabe (Termin
+# entfallen) legt der Planungs-Agent sie nicht wieder an.
+REJECTED = "abgelehnt"
+STATUSES = (OPEN, IN_PROGRESS, DONE, DISCARDED, REJECTED)
 # Ergebnis von upsert_task.
 NEW, CHANGED, UNCHANGED = "neu", "geaendert", "unveraendert"
 
@@ -205,6 +208,16 @@ class Store:
                 (title, context, due_date.isoformat(), status, now, row["id"]),
             )
             return CHANGED
+
+    def add_task(self, kind: str, title: str, context: str, due_date: date, created_by: str) -> int:
+        """Legt eine Aufgabe ohne Termin an (etwa vom Nutzer ergaenzt) und gibt ihre Nummer zurueck."""
+        now = _now()
+        with self.db:
+            return self.db.execute(
+                "INSERT INTO tasks (kind, title, context, due_date, created_by, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (kind, title, context, due_date.isoformat(), created_by, now, now),
+            ).lastrowid
 
     def discard_task(self, event_id: str, kind: str) -> bool:
         """Verwirft die noch nicht erledigte Aufgabe einer Art zu einem Termin."""
