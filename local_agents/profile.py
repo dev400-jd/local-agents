@@ -40,6 +40,8 @@ class Context:
     description: str = ""
     # Rolle des Nutzers in diesem Kontext, falls sie von der allgemeinen abweicht.
     role: str = ""
+    # Ordner mit den User Stories dieses Kontexts als Markdown (stories.py).
+    stories_dir: str = ""
     domains: frozenset[str] = frozenset()
     keywords: tuple[str, ...] = ()
     # Nur fuer Kunden: Stresslevel des Projekts (STRESS_LEVELS, leer = niedrig)
@@ -202,6 +204,7 @@ def load_profile(path: Path | None = None) -> Profile:
                 label=raw.get("label", raw["id"]),
                 description=raw.get("description", ""),
                 role=raw.get("role", ""),
+                stories_dir=raw.get("stories_dir", ""),
                 domains=frozenset(d.casefold() for d in raw.get("domains", [])),
                 keywords=tuple(k.casefold() for k in raw.get("keywords", [])),
                 stress=raw.get("stress", "").casefold(),

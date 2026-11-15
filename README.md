@@ -26,6 +26,7 @@ und Modellerfahrungen stehen im Schwesterprojekt `opencode-ollama-agents`
 | Termin-Agent | `local_agents/meeting_agent.py` | erkennt die Art des Termins und welche Ergebnisse dir dafür helfen |
 | Terminarten | `local_agents/meeting_types.py` | Katalog: Zweck und übliche Beiträge je Terminart, auch Scrum |
 | Orchestrierung | `local_agents/orchestrator.py` | reicht die nächste Aufgabe von Agent zu Agent weiter |
+| User Stories | `local_agents/stories.py` | liest Features und Stories aus Markdown-Dateien, Wissensbasis für den Daily-Agenten |
 
 ## Ablauf im Überblick
 
@@ -599,6 +600,86 @@ ist geraten. Der Termin-Agent läuft mit mittlerem Reasoning-Aufwand: Mit
 niedrigem übernahm `gpt-oss:20b` die Katalog-Beiträge wörtlich oder erfand
 Projektdetails.
 
+## User Stories als Markdown
+
+Die Wissensbasis für die inhaltliche Vorbereitung (zuerst das Daily) sind die
+User Stories des Projekts als Markdown, eine Datei je Feature. Sie liegen als
+normale Dateien in einem Ordner; kein Programm muss dafür laufen. Wer mag,
+öffnet denselben Ordner in Obsidian zum Lesen und Suchen, am Aufbau ändert das
+nichts.
+
+```toml
+[[contexts]]
+id = "kunde-acme"
+stories_dir = "~/local-agents-vault/kunde-acme"
+```
+
+Der Ordner gehört nicht ins Repo und nicht in einen Cloud-Ordner (iCloud,
+OneDrive): Er enthält Kundendaten. Dateien bleiben, wie sie geschrieben
+wurden; der Code liest sie bei jedem Aufruf neu, es gibt keine zweite Kopie.
+
+```bash
+.venv/bin/python -m local_agents.stories        # Features und Stories im Überblick
+.venv/bin/python -m local_agents.stories QG-1   # eine Story vollständig
+```
+
+```text
+Feature: Bestellimport mit Qualitätsprüfung (2 Stories, Feature_Bestellimport_2026-11-11.md)
+  QG-1: Prüfregeln für `bestellung_roh` [3 PT, 2 Akzeptanzkriterien, 2 Aufgaben]
+  TR-2: Bericht bereitstellen [1 PT]
+```
+
+Der Leser hängt nicht an einem bestimmten Aufbau. Verlangt ist nur: Eine Story
+ist ein Überschriften-Abschnitt mit einem Namen. Gelesen wird in drei
+Schichten:
+
+1. **Gliederung.** Jede Datei wird in ihre Überschriften-Abschnitte zerlegt
+   (Zeilen in Codeblöcken zählen nicht). Das geht mit jedem Markdown.
+2. **Welche Abschnitte sind Stories?**
+   - *Regel:* Überschriften unterhalb des Titels, die mit einem Kürzel
+     beginnen: `## QG-1: Titel`, `### CL-1 Titel`, `## ZI-0a Titel`.
+   - *Modell, wenn die Regel nichts findet:* Das lokale Modell bekommt nur
+     die Liste der Überschriften (mit Ebene, Umfang und Textanfang) und
+     markiert die Stories. Es schreibt keinen Inhalt ab, kann also nichts
+     daran verändern.
+   - Das Ergebnis des Modells steht danach in `stories-index.json` im
+     Ordner. Dort korrigierst du es bei Bedarf (Liste der Überschriften) und
+     setzt `"geprueft": true`; dann bleibt der Eintrag auch nach Änderungen
+     an der Datei bestehen. Ohne diesen Haken wird eine geänderte Datei neu
+     markiert.
+   - Stehen unter einem markierten Abschnitt selbst Stories, gilt er als
+     Gruppe, nicht als Story.
+3. **Felder (Zugabe).** Wo üblich geschrieben, erkennt der Code Schätzung,
+   Akzeptanzkriterien, Aufgaben und weitere Felder. Agenten dürfen sich nur
+   auf Name und Text einer Story verlassen.
+
+Was Schicht 3 versteht (Beispiele: `tests/data/feature_beispiel.md` und
+`tests/data/feature_varianten.md`):
+
+| Teil | Erkennung |
+|---|---|
+| Feature | erste Überschrift `# …` (ein vorangestelltes „Feature:" entfällt), sonst der Dateiname |
+| Gruppe | der Abschnitt, unter dem eine Story steht |
+| Angabenzeile | Zeile gleich unter der Überschrift mit `·` oder `\|` als Trenner, z. B. `` `kürzel` · 3 SP · Sprint: 12 ``; daraus kommen Schätzung und benannte Angaben |
+| Felder | fett gesetzter Name am Zeilenanfang (`**Story**`, `**Schätzung:** 3 SP`) oder eine Unterüberschrift (`#### Akzeptanzkriterien`); der Text reicht bis zum nächsten Feld |
+| Story-Satz ohne Feldnamen | freier oder kursiver Text vor dem ersten Feld gilt als Feld „Story" |
+| Tabellen ohne Feldnamen | heißen nach ihrem Kopf: „Kriterium" → Akzeptanzkriterien, „Aufgabe" → Aufgaben, „Voraussetzung" → Voraussetzungen, „Frage" → Klärung |
+| Schätzung | Feld „Schätzung", „Aufwand", „Story Points" oder „Estimate", oder eine Angabe wie `3 SP` |
+
+Prüfen, ob eine neue Datei verstanden wird: `python -m local_agents.stories`
+zeigt je Story Schätzung und Zahl der Akzeptanzkriterien und Aufgaben, und bei
+Features den Zusatz „vom Modell erkannt", wenn die Regel nicht griff. Nur
+dieser Befehl fragt das Modell; andere Agenten lesen den Index.
+
+- Der volle Name einer Story (`QG-1: Titel`) ist der Schlüssel, über den
+  später der Stand aus dem Projektwerkzeug des Kunden dazukommt.
+- Liegt ein Feature in mehreren Dateien vor (Datum im Dateinamen), gilt die
+  Datei, deren Name alphabetisch zuletzt kommt.
+- Dateien ohne Story-Abschnitte werden übergangen.
+- Für andere Agenten: `load_features(ordner)` liefert `Feature`-Objekte mit
+  `stories`; je Story verlässlich `name` und `text` (der ganze Abschnitt),
+  als Zugabe `key`, `group`, `estimate`, `fields` und `table("Aufgaben")`.
+
 ### Modell je Agent
 
 Jeder Agent kann ein eigenes Ollama-Modell bekommen, über den Agentennamen im
@@ -606,7 +687,7 @@ Profil; ohne Eintrag gilt das Standardmodell:
 
 ```toml
 [models]
-status = "qwen3.5:9b-q8_0"   # Agentennamen: status, termin
+status = "qwen3.5:9b-q8_0"   # Agentennamen: status, termin, stories
 ```
 
 Gemessen am Status-Agenten mit 15 offenen Aufgaben (2026-11-15, je 2 Läufe):
@@ -648,6 +729,7 @@ Felder der Datei:
 | `[[contexts]]` `kind` | `intern` (Arbeitgeber) oder `kunde` (je Kunde ein Block) |
 | `[[contexts]]` `label`, `description` | Anzeigename und Erläuterung, z. B. das Projekt |
 | `[[contexts]]` `role` | deine Rolle in diesem Kontext, falls sie von `[person]` `role` abweicht; nutzt der Termin-Agent |
+| `[[contexts]]` `stories_dir` | Ordner mit den User Stories des Kontexts als Markdown, siehe [User Stories als Markdown](#user-stories-als-markdown) |
 | `[[contexts]]` `domains` | Mail-Domains, die zu diesem Kontext gehören |
 | `[[contexts]]` `keywords` | Stichwörter im Titel, Groß-/Kleinschreibung egal |
 | `[[contexts]]` `stress` | nur Kunden: Stresslevel des Projekts, `niedrig`, `mittel` oder `hoch` |
@@ -846,3 +928,15 @@ eine Antwort auswertet oder der Status-Agent eine Nachricht-Aufgabe nennt.
   meist auf die Rolle bezogen, vereinzelt mit Vermutetem. Kette
   Status-Agent → Termin-Agent auf der echten Datenbank: rund 6 s, mit
   gespeicherter Einordnung rund 2 s.
+- User Stories aus Markdown (`stories.py`, 2026-11-15): vier echte Dateien in
+  vier Schreibweisen werden gelesen, zusammen 58 Stories, alle mit Story-Text
+  und Schätzung, 57 mit Tabellen für Akzeptanzkriterien und Aufgaben (eine
+  Story hat in der Datei keine). Geprüft über Zählungen, nicht über den
+  Inhalt.
+- Stories vom Modell erkennen lassen (`gpt-oss:20b`, 2026-11-15, dieselben
+  vier Dateien, verglichen mit der Regel): mit Kürzeln in den Überschriften in
+  zwei Läufen je Datei alle 58 Stories richtig, nichts zu viel. Mit entfernten
+  Kürzeln, wie in einer Datei ohne Kürzel, 57 von 58 richtig, nichts zu viel,
+  eine übersehen. Je Datei 1 bis 6 Sekunden. Dateien ganz anderer Machart
+  (andere Autoren, andere Sprache) sind nicht erprobt.
+- Noch nicht angebunden: Daily-Agent und Stand aus dem Projektwerkzeug.

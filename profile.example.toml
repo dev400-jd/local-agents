@@ -34,6 +34,9 @@ description = "Projekt Datenplattform"
 # Rolle in diesem Kontext, falls sie von der allgemeinen Rolle abweicht. Der
 # Termin-Agent leitet daraus ab, was du in einem Termin liefern solltest.
 role = "Solution Architect"
+# Ordner mit den User Stories des Projekts als Markdown, eine Datei je Feature.
+# Ausserhalb des Repos und nicht in einem Cloud-Ordner ablegen (Kundendaten).
+# stories_dir = "~/local-agents-vault/kunde-acme"
 domains = ["acme.example"]
 keywords = ["acme", "datenplattform"]
 # Stresslevel des Projekts: "niedrig", "mittel" oder "hoch". Ab "mittel" schlaegt
