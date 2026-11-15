@@ -39,3 +39,10 @@ stress = "mittel"
 # Tage beim Kunden: Interne Termine an diesen Tagen schlaegt der Agent immer
 # zum Verschieben vor.
 onsite_days = ["Mi"]
+
+# Planungs-Agent: Aufgaben sind lead_days Tage vor dem Termin fertig (1 = am
+# Vortag). Termine, deren Titel eines der Stichwoerter in skip enthaelt,
+# bekommen keine Aufgabe, z. B. skip = ["Company Call"].
+[planning]
+lead_days = 1
+skip = []

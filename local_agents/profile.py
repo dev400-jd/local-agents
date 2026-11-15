@@ -62,6 +62,10 @@ class Profile:
     contexts: tuple[Context, ...] = field(default=())
     # Technische Domains ohne Aussagekraft, z. B. Adressen von Teams-Kanaelen.
     ignored_domains: frozenset[str] = frozenset()
+    # Planung: Aufgaben sind so viele Tage vor dem Termin fertig; Termine mit
+    # einem dieser Stichwoerter im Titel bekommen keine Aufgabe.
+    lead_days: int = 1
+    plan_skip: tuple[str, ...] = ()
 
     def context_ids(self) -> list[str]:
         """Alle Werte, die ``classify`` liefern kann."""
@@ -191,7 +195,13 @@ def load_profile(path: Path | None = None) -> Profile:
     state = person.get("state", "").upper()
     if state and state not in STATES:
         raise ProfileError(f"{path}: state {state!r} unbekannt. Erlaubt: {', '.join(STATES)}.")
+    planning = data.get("planning", {})
+    lead_days = planning.get("lead_days", 1)
+    if not isinstance(lead_days, int) or isinstance(lead_days, bool) or lead_days < 0:
+        raise ProfileError(f"{path}: lead_days muss eine ganze Zahl ab 0 sein.")
     return Profile(
+        lead_days=lead_days,
+        plan_skip=tuple(word.casefold() for word in planning.get("skip", [])),
         state=state,
         name=person.get("name", ""),
         employer=person.get("employer", ""),

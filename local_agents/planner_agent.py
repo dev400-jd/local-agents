@@ -1,0 +1,200 @@
+"""Planungs-Agent: leitet aus den Terminen Aufgaben mit Fertig-bis-Datum ab
+und schreibt sie in die Agenten-Datenbank.
+
+Aufruf: python -m local_agents.planner_agent ["Frage"]
+
+Ohne Frage plant der Agent die kommende Woche. Je Termin entsteht eine Aufgabe
+"Vorbereitung", fertig ``lead_days`` Tage vor dem Termin (Profil, Standard 1).
+Ein zweiter Lauf legt nichts doppelt an: Er gleicht ab, was sich geaendert hat,
+und verwirft Aufgaben zu Terminen, die es nicht mehr gibt.
+
+Was in der Datenbank landet, entscheidet der Code. Das Modell waehlt nur den
+Zeitraum und kommentiert das Ergebnis.
+"""
+
+import sys
+from collections import Counter
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import date, timedelta
+
+from pydantic_ai import Agent, ModelRetry, RunContext
+
+from local_agents.agent import MODEL_SETTINGS, answer_with_notes, format_notes, ollama_model
+from local_agents.calendar_agent import MAX_RANGE_DAYS, is_holiday_entry
+from local_agents.calendar_events import CalendarAccessError, Event, fetch_events, next_week
+from local_agents.holidays import WEEKDAYS
+from local_agents.profile import Profile, ProfileError, load_profile
+from local_agents.store import CHANGED, NEW, UNCHANGED, Store, StoredEvent, Task
+
+AGENT_NAME = "planner"
+PREPARATION = "vorbereitung"
+DEFAULT_QUESTION = "Plane meine naechste Woche."
+
+
+@dataclass(frozen=True)
+class Plan:
+    """Ergebnis eines Planungslaufs fuer einen Zeitraum."""
+
+    start: date
+    end: date
+    counts: Counter  # NEW, CHANGED, UNCHANGED -> Anzahl Aufgaben
+    discarded: int  # verworfene Aufgaben zu entfallenen Terminen
+    tasks: list[Task]  # alle nicht verworfenen Aufgaben zu Terminen des Zeitraums
+
+
+def plan_events(events: list[Event], profile: Profile, store: Store, start: date, end: date) -> Plan:
+    """Schreibt Termine und ihre Vorbereitungsaufgaben in die Datenbank."""
+    counts: Counter = Counter()
+    kept: set[str] = set()
+    seen: set[tuple] = set()
+    for event in sorted(events, key=lambda e: (e.start, e.title)):
+        duplicate = (event.start, event.end, event.title)
+        if not needs_task(event, profile) or duplicate in seen:
+            continue
+        seen.add(duplicate)
+        event_id = f"{event.uid or event.title}|{event.start.isoformat()}"
+        context = profile.classify(event.title, event.organizer_domain, event.attendee_domains)
+        store.upsert_event(
+            StoredEvent(
+                event_id,
+                event.title.strip(),
+                event.start,
+                event.end,
+                context,
+                event.location,
+                len(event.attendee_domains),
+            )
+        )
+        day = event.start.date()
+        title = f"Vorbereitung: {event.title.strip()} ({WEEKDAYS[day.weekday()]} {event.start:%d.%m. %H:%M})"
+        due = day - timedelta(days=profile.lead_days)
+        counts[store.upsert_task(event_id, PREPARATION, title, context, due, AGENT_NAME)] += 1
+        kept.add(event_id)
+    discarded = store.drop_events(start, end, kept)
+    tasks = [task for task in store.tasks() if task.event_id in kept]
+    return Plan(start, end, counts, discarded, tasks)
+
+
+def needs_task(event: Event, profile: Profile) -> bool:
+    """Ganztaegige Eintraege und im Profil ausgenommene Termine bekommen keine Aufgabe."""
+    if event.all_day or is_holiday_entry(event):
+        return False
+    title = event.title.casefold()
+    return not any(word in title for word in profile.plan_skip)
+
+
+def plan_lines(plan: Plan, profile: Profile) -> list[str]:
+    """Die Aufgaben des Plans als Liste, nach Fertig-bis-Datum gruppiert."""
+    lines = []
+    current = None
+    for task in plan.tasks:
+        if task.due_date != current:
+            current = task.due_date
+            lines.append(f"- fertig bis {WEEKDAYS[current.weekday()]} {current:%d.%m.%Y}:")
+        status = "" if task.status == "offen" else f", {task.status}"
+        lines.append(f"  - #{task.id} {task.title} [{profile.label(task.context)}{status}]")
+    return lines
+
+
+def plan_summary(plan: Plan) -> str:
+    counts = plan.counts
+    return (
+        f"{counts[NEW]} neu, {counts[CHANGED]} geändert, {counts[UNCHANGED]} unverändert, "
+        f"{plan.discarded} verworfen"
+    )
+
+
+@dataclass
+class PlannerDeps:
+    """Laufzeitabhaengigkeiten: heutiges Datum, Profil, Terminquelle und Datenbank."""
+
+    today: date
+    store: Store
+    profile: Profile = field(default_factory=Profile)
+    fetch: Callable[[date, date], list[Event]] = fetch_events
+    notes: dict[str, list[str]] = field(default_factory=dict)
+    plans: list[Plan] = field(default_factory=list)
+
+
+planner_agent = Agent(deps_type=PlannerDeps, model_settings=MODEL_SETTINGS, retries=2)
+
+
+@planner_agent.instructions
+def instructions(ctx: RunContext[PlannerDeps]) -> str:
+    today = ctx.deps.today
+    monday, sunday = next_week(today)
+    return (
+        "Du bist ein Planungs-Assistent. Rufe plan_week fuer den gewuenschten "
+        "Zeitraum auf; das legt die Aufgaben in der Datenbank an. "
+        f"Heute ist {WEEKDAYS[today.weekday()]}, {today.isoformat()}. "
+        f"Die naechste Woche reicht von {monday.isoformat()} bis {sunday.isoformat()}. "
+        "Sage danach in zwei, drei Saetzen auf Deutsch, was angelegt wurde und an "
+        "welchen Tagen besonders viel faellig ist. Die Aufgabenliste wird "
+        "automatisch angehaengt; zaehle die Aufgaben nicht einzeln auf."
+    )
+
+
+@planner_agent.tool
+def plan_week(ctx: RunContext[PlannerDeps], start: date, end: date) -> str:
+    """Legt fuer alle Termine des Zeitraums Vorbereitungsaufgaben in der Datenbank an.
+
+    Args:
+        start: Erster Tag im Format JJJJ-MM-TT.
+        end: Letzter Tag (einschliesslich) im Format JJJJ-MM-TT.
+    """
+    if end < start:
+        raise ModelRetry("end liegt vor start.")
+    if (end - start).days >= MAX_RANGE_DAYS:
+        raise ModelRetry(f"Zeitraum zu lang, hoechstens {MAX_RANGE_DAYS} Tage.")
+    return _plan(ctx.deps, start, end)
+
+
+def _plan(deps: PlannerDeps, start: date, end: date) -> str:
+    plan = plan_events(deps.fetch(start, end), deps.profile, deps.store, start, end)
+    deps.plans.append(plan)
+    heading = f"Aufgaben für {start:%d.%m.}–{end:%d.%m.%Y} ({plan_summary(plan)})"
+    deps.notes[heading] = plan_lines(plan, deps.profile) or ["- keine Aufgaben"]
+    per_day = Counter(task.due_date for task in plan.tasks)
+    days = ", ".join(
+        f"{WEEKDAYS[day.weekday()]} {day:%d.%m.}: {count}" for day, count in sorted(per_day.items())
+    )
+    return (
+        f"Aufgaben in der Datenbank: {plan_summary(plan)}. "
+        f"Faellig je Tag: {days or 'nichts'}."
+    )
+
+
+def run(question: str, deps: PlannerDeps, model) -> str:
+    """Laesst den Agenten planen und protokolliert den Lauf in der Datenbank."""
+    run_id = deps.store.start_run(AGENT_NAME)
+    try:
+        output = answer_with_notes(planner_agent, question, deps, model)
+        if not deps.plans:
+            # Das Modell hat das Werkzeug nicht aufgerufen: trotzdem planen.
+            _plan(deps, *next_week(deps.today))
+            output += format_notes(deps.notes)
+    except BaseException:
+        deps.store.finish_run(run_id, "fehler")
+        raise
+    deps.store.finish_run(run_id, "ok", "; ".join(plan_summary(plan) for plan in deps.plans))
+    return output
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) > 2:
+        print(__doc__, file=sys.stderr)
+        return 2
+    question = argv[1] if len(argv) == 2 else DEFAULT_QUESTION
+    try:
+        deps = PlannerDeps(today=date.today(), store=Store(), profile=load_profile())
+        output = run(question, deps, ollama_model())
+    except (CalendarAccessError, ProfileError) as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    print(output)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

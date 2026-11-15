@@ -49,10 +49,14 @@ def answer_with_notes(agent: Agent, question: str, deps, model) -> str:
     beim Wiedergeben veraendern.
     """
     output = agent.run_sync(question, model=model, deps=deps).output.rstrip()
-    for heading, lines in deps.notes.items():
-        if lines:
-            output += f"\n\n**{heading}**\n" + "\n".join(lines)
-    return output
+    return output + format_notes(deps.notes)
+
+
+def format_notes(notes: dict[str, list[str]]) -> str:
+    """Die Abschnitte als Text, jeweils mit Leerzeile davor und fetter Ueberschrift."""
+    return "".join(
+        f"\n\n**{heading}**\n" + "\n".join(lines) for heading, lines in notes.items() if lines
+    )
 
 
 agent = Agent(

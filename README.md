@@ -15,6 +15,9 @@ und Modellerfahrungen stehen im Schwesterprojekt `opencode-ollama-agents`
 | Planung | `local_agents/planning.py` | Verschiebevorschläge für interne Termine |
 | Asana-Agent | `local_agents/asana_agent.py` | zeigt, wo der Nutzer in Asana erwähnt wurde |
 | Asana-Quelle | `local_agents/asana_source.py` | liest Erwähnungen über die Asana-API |
+| Planungs-Agent | `local_agents/planner_agent.py` | leitet aus Terminen Aufgaben mit Fertig-bis-Datum ab |
+| Agenten-Datenbank | `local_agents/store.py` | SQLite-Datei mit Terminen, Aufgaben und Läufen |
+| Aufgaben-Befehl | `local_agents/tasks.py` | Aufgaben ansehen und abhaken |
 
 ## Einrichtung
 
@@ -207,6 +210,72 @@ das eigene Konto. Daraus folgen Grenzen:
 
 Die Textauszüge gehen an das lokale Modell, sonst nirgendwohin.
 
+## Planungs-Agent und Agenten-Datenbank
+
+Der Planungs-Agent liest die Termine der kommenden Woche und legt je Termin
+eine Aufgabe „Vorbereitung" in der Agenten-Datenbank an, fertig am Vortag des
+Termins: Das Daily am Montag, 16.11., ergibt eine Aufgabe, die am Sonntag,
+15.11., fertig sein muss.
+
+```bash
+.venv/bin/python -m local_agents.planner_agent
+.venv/bin/python -m local_agents.planner_agent "Plane die Woche ab dem 23.11.2026"
+```
+
+Der Agent kann beliebig oft laufen. Ein weiterer Lauf legt nichts doppelt an,
+sondern gleicht ab:
+
+- neuer Termin → neue Aufgabe,
+- umbenannter Termin → Aufgabe wird angepasst, Status und Ergebnis bleiben,
+- abgesagter oder verschobener Termin → offene Aufgabe wird verworfen (ein
+  verschobener Termin bekommt eine neue Aufgabe mit neuem Datum).
+
+Keine Aufgabe bekommen ganztägige Einträge, Feiertage und Termine, die im
+Profil ausgenommen sind. Doppelt eingetragene Termine ergeben eine Aufgabe,
+jeder Termin einer Serie eine eigene. Einstellungen im Profil:
+
+```toml
+[planning]
+lead_days = 1               # Tage vor dem Termin; 1 = am Vortag, auch am Wochenende
+skip = ["Company Call"]     # Stichwörter im Titel: keine Aufgabe
+```
+
+Was in der Datenbank landet, entscheidet der Code. Das Modell wählt nur den
+Zeitraum und kommentiert das Ergebnis; ruft es das Werkzeug nicht auf, plant
+der Agent trotzdem die kommende Woche.
+
+### Aufgaben ansehen und abhaken
+
+```bash
+.venv/bin/python -m local_agents.tasks               # offene Aufgaben
+.venv/bin/python -m local_agents.tasks alle          # auch erledigte und verworfene
+.venv/bin/python -m local_agents.tasks erledigt 12   # Aufgabe #12 abhaken
+.venv/bin/python -m local_agents.tasks offen 12      # wieder öffnen
+```
+
+### Die Datenbank
+
+Eine SQLite-Datei unter `~/.local/share/local-agents/agents.db`, außerhalb des
+Repos, weil Termintitel und Kundennamen darin stehen. Anderer Pfad:
+`LOCAL_AGENTS_DB=<datei>`. Sie entsteht beim ersten Lauf von selbst.
+
+| Tabelle | Inhalt |
+|---|---|
+| `events` | Termine, wie der Planungs-Agent sie gesehen hat: Titel, Beginn, Ende, Kontext, Ort, Zahl der Eingeladenen |
+| `tasks` | Aufgaben: Art (`kind`), Titel, Kontext, Fertig-bis-Datum, Status, zuständiger Agent, Ergebnis, zugehöriger Termin |
+| `runs` | Protokoll: welcher Agent wann lief, mit Status und Kurzfassung |
+
+Status einer Aufgabe: `offen`, `in_arbeit`, `erledigt`, `verworfen`. Die
+Spalten `agent` und `result` sind für Agenten gedacht, die Aufgaben später
+selbst erledigen; bisher füllt sie niemand. Je Termin und Art gibt es höchstens
+eine Aufgabe, daran erkennt der Planungs-Agent, was schon da ist.
+
+Andere Agenten greifen über `local_agents/store.py` zu (`Store().tasks(...)`,
+`set_status`, `start_run`). Direkt hineinsehen geht mit
+`sqlite3 ~/.local/share/local-agents/agents.db "select * from tasks"`. Zum
+Zurücksetzen die Datei löschen. Die Agenten laufen nacheinander; gleichzeitige
+Schreiber sind nicht vorgesehen.
+
 ## Profil: gemeinsames Gedächtnis der Agenten
 
 `local_agents/profile.py` lädt ein Profil, das beschreibt, wer der Nutzer ist
@@ -237,6 +306,8 @@ Felder der Datei:
 | `[[contexts]]` `keywords` | Stichwörter im Titel, Groß-/Kleinschreibung egal |
 | `[[contexts]]` `stress` | nur Kunden: Stresslevel des Projekts, `niedrig`, `mittel` oder `hoch` |
 | `[[contexts]]` `onsite_days` | nur Kunden: Tage beim Kunden, z. B. `["Mi"]` oder `["Mittwoch", "Fr"]` |
+| `[planning]` `lead_days` | Planungs-Agent: Aufgaben sind so viele Tage vor dem Termin fertig (Standard 1) |
+| `[planning]` `skip` | Planungs-Agent: Stichwörter im Titel, für die keine Aufgabe entsteht |
 
 Eine fehlerhafte Datei (unbekanntes Bundesland, falsches `kind`, doppelte `id`)
 bricht den Lauf mit einer Meldung ab. Das gilt auch für ein unbekanntes
@@ -378,3 +449,6 @@ oder Tabelle) schwankt von Lauf zu Lauf.
   (2026-11-14). Die Suche fand in 14 Tagen 9 gefolgte Aufgaben und darin 1
   Erwähnung; der Posteingang der Asana-API (16 Benachrichtigungen) enthielt im
   selben Zeitraum ebenfalls genau 1 Erwähnung.
+- Planungs-Agent gegen echten Kalender und `gpt-oss:20b`: legt für die Woche
+  16.–22.11.2026 16 Aufgaben an; ein zweiter Lauf meldet 16 unverändert
+  (2026-11-14).

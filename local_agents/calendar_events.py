@@ -32,6 +32,8 @@ class Event:
     # ohne Namen oder Adressen.
     organizer_domain: str = ""
     attendee_domains: tuple[str, ...] = ()
+    # Kennung des Termins im Kalender; Serientermine teilen sie sich.
+    uid: str = ""
 
 
 def next_week(today: date) -> tuple[date, date]:
@@ -100,6 +102,7 @@ def fetch_events(start: date, end: date) -> list[Event]:
             all_day=bool(item.isAllDay()),
             location=str(item.location() or ""),
             calendar=str(item.calendar().title() or ""),
+            uid=str(item.calendarItemExternalIdentifier() or item.eventIdentifier() or ""),
             organizer_domain=_domain(item.organizer()),
             attendee_domains=tuple(
                 domain for domain in map(_domain, item.attendees() or []) if domain
