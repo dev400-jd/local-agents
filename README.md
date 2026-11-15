@@ -22,6 +22,32 @@ und Modellerfahrungen stehen im Schwesterprojekt `opencode-ollama-agents`
 | Sprachausgabe | `local_agents/voice.py` | liest Text mit dem lokalen Sprachmodell Piper vor |
 | Spracheingabe | `local_agents/listen.py` | nimmt eine gesprochene Antwort auf und erkennt sie lokal mit Whisper |
 | Rückmeldung | `local_agents/feedback.py` | setzt die Antwort auf den Plan um: Aufgaben herausnehmen oder ergänzen |
+| Status-Agent | `local_agents/status_agent.py` | kennt Datum und Uhrzeit, nennt die nächsten Aufgaben und ihre Dringlichkeit |
+
+## Ablauf im Überblick
+
+Die Bausteine greifen so ineinander; alles läuft auf dem Rechner, auch Modell,
+Stimme und Spracherkennung:
+
+1. **Planen** (`planner_agent`): liest die Termine der kommenden Woche und
+   legt Aufgaben in der Agenten-Datenbank an, je Termin eine Vorbereitung und
+   für interne Termine, die dem Kundenprojekt weichen sollten, eine Nachricht
+   an den Organisator mit einigen Tagen Vorlauf.
+2. **Kurzfassung:** Der ganze Plan steht im Terminal; ein Überblick in wenigen
+   Sätzen wird vorgelesen und endet mit „Passt das so für dich?".
+3. **Absegnen:** Du antwortest gesprochen (oder getippt mit `--stumm`). Ein Ja
+   lässt den Plan stehen, sonst nimmt der Agent Aufgaben heraus oder ergänzt
+   welche. Danach gilt der Plan als abgesegnet.
+4. **Abarbeiten** (`status_agent`): nennt zu Datum und Uhrzeit die eine
+   Aufgabe, die als Nächstes dran ist. Agenten, die Aufgaben selbst erledigen,
+   gibt es noch nicht; sie sollen sich die nächste Aufgabe über
+   `next_task(...)` holen und Status und Ergebnis in die Datenbank schreiben.
+
+```bash
+.venv/bin/python -m local_agents.planner_agent   # Schritte 1 bis 3
+.venv/bin/python -m local_agents.status_agent    # Schritt 4
+.venv/bin/python -m local_agents.tasks           # der ganze Plan
+```
 
 ## Einrichtung
 
@@ -454,7 +480,7 @@ Repos, weil Termintitel und Kundennamen darin stehen. Anderer Pfad:
 |---|---|
 | `events` | Termine, wie der Planungs-Agent sie gesehen hat: Titel, Beginn, Ende, Kontext, Ort, Zahl der Eingeladenen, Name des Organisators |
 | `tasks` | Aufgaben: Art (`kind`), Titel, Kontext, Fertig-bis-Datum, Status, zuständiger Agent, Ergebnis, zugehöriger Termin |
-| `runs` | Protokoll: welcher Agent wann lief, mit Status und Kurzfassung |
+| `runs` | Protokoll: welcher Agent wann lief, mit Status und Kurzfassung. Einträge: `planner` (Planungslauf), `rueckmeldung` (Antwort mit Änderungen ausgewertet), `freigabe` (Plan abgesegnet) |
 
 Status einer Aufgabe: `offen`, `in_arbeit`, `erledigt`, `verworfen` (Termin
 entfallen) und `abgelehnt` (von dir herausgenommen). Die
@@ -467,6 +493,71 @@ Andere Agenten greifen über `local_agents/store.py` zu (`Store().tasks(...)`,
 `sqlite3 ~/.local/share/local-agents/agents.db "select * from tasks"`. Zum
 Zurücksetzen die Datei löschen. Die Agenten laufen nacheinander; gleichzeitige
 Schreiber sind nicht vorgesehen.
+
+## Status-Agent
+
+Der erste Baustein für das Abarbeiten des abgesegneten Plans. Er kennt nur
+Datum, Uhrzeit und die offenen Aufgaben und nennt die eine Aufgabe, die jetzt
+als Allernächstes dran ist, nicht den ganzen Plan:
+
+```bash
+.venv/bin/python -m local_agents.status_agent
+```
+
+```text
+Als Nächstes steht die Vorbereitung für das Daily an, der Termin beginnt in 14 Stunden.
+
+**Stand So 15.11.2026, 18:53 Uhr (Plan abgesegnet am 15.11. 18:45)**
+Als Nächstes: #1 Vorbereitung: Daily (Mo 16.11. 09:00) [Kunde ACME; heute fällig; fertig bis So 15.11.; Termin in 14 Std 7 Min]
+Danach noch 14 weitere Aufgaben: 4 heute fällig, 2 morgen fällig, 8 später fällig.
+```
+
+Welche Aufgabe das ist, rechnet der Code aus Fertig-bis-Datum und
+Terminbeginn. Die Reihenfolge der Dringlichkeit:
+
+| Stufe | Bedeutung |
+|---|---|
+| `überfällig` | Fertig-bis-Datum liegt vor heute |
+| `heute fällig`, `morgen fällig` | heute bzw. morgen fällig |
+| `später fällig` | alles danach |
+| `hinfällig` | der zugehörige Termin hat schon begonnen; solche Aufgaben werden nie als Nächstes genannt |
+
+Innerhalb einer Stufe kommt zuerst, was zum früheren Termin gehört. Mit der
+Uhrzeit rückt die Antwort weiter: Hat ein Termin begonnen, ist seine
+Vorbereitung hinfällig und die nächste Aufgabe dran. Das Modell formuliert nur
+die ein, zwei Sätze darüber. Den ganzen Plan zeigt
+`python -m local_agents.tasks`.
+
+Als abgesegnet gilt der Plan, sobald du im Planungs-Agenten auf die Rückfrage
+geantwortet hast (mit Ja oder mit Änderungen); der Zeitpunkt steht in der
+Überschrift. Ohne Freigabe läuft der Status-Agent trotzdem und vermerkt „Plan
+noch nicht abgesegnet".
+
+Andere Agenten brauchen dafür kein Modell: `next_task(Store(), datetime.now())`
+aus `local_agents/status_agent.py` liefert die dringendste offene Aufgabe mit
+Stufe und Zeit bis zum Termin, `next_tasks(...)` alle in dieser Reihenfolge.
+
+### Modell je Agent
+
+Jeder Agent kann ein eigenes Ollama-Modell bekommen, über den Agentennamen im
+Profil; ohne Eintrag gilt das Standardmodell:
+
+```toml
+[models]
+status = "qwen3.5:9b-q8_0"
+```
+
+Gemessen am Status-Agenten mit 15 offenen Aufgaben (2026-11-15, je 2 Läufe):
+
+| Modell | Dauer | Antwort |
+|---|---|---|
+| `gpt-oss:20b`, Reasoning niedrig (Standard) | 3–8 s | sachlich richtig |
+| `qwen3.5:9b-q8_0` mit Nachdenken | 141–147 s | sachlich richtig, gutes Deutsch |
+| `qwen3.5:9b-q8_0` ohne Nachdenken | 3–6 s | erfundene Angabe („in weniger als 6 Minuten"), Grammatikfehler |
+
+Deshalb läuft der Status-Agent vorerst mit dem Standardmodell. Die Einstellung
+„Reasoning niedrig" verkürzt das Nachdenken bei Qwen nicht; abschalten lässt es
+sich nur ganz, und das ist im Code noch nicht je Agent einstellbar.
 
 ## Profil: gemeinsames Gedächtnis der Agenten
 
@@ -502,6 +593,7 @@ Felder der Datei:
 | `[planning]` `move_lead_days` | Planungs-Agent: Vorlauf der Aufgaben „Nachricht an …, Termin verschieben" (Standard 3) |
 | `[voice]` `enabled`, `model`, `speed`, `speaker`, `voice` | Sprachausgabe, siehe [Stimme anpassen](#stimme-anpassen) |
 | `[listen]` `enabled`, `model`, `language` | Spracheingabe, siehe [Gesprochene Antwort](#gesprochene-antwort) |
+| `[models]` `<agent>` | Ollama-Modell für einen Agenten, siehe [Modell je Agent](#modell-je-agent) |
 | `[planning]` `skip` | Planungs-Agent: Stichwörter im Titel, für die keine Aufgabe entsteht |
 
 Eine fehlerhafte Datei (unbekanntes Bundesland, falsches `kind`, doppelte `id`)
@@ -623,6 +715,20 @@ es sie beim Wiedergeben veränderte (z. B. „eher aussetzen" an einem falschen
 Termin). Das Modell formuliert nur die Zusammenfassung; deren Aufbau (Liste
 oder Tabelle) schwankt von Lauf zu Lauf.
 
+Dasselbe gilt für die neueren Bausteine:
+
+| Aufgabe | Wer entscheidet |
+|---|---|
+| Welche Aufgaben entstehen, mit welchem Datum | Code |
+| Text der gesprochenen Kurzfassung | Code (Satzbausteine); vom Modell geschrieben hatte er Grammatikfehler und eine erfundene Uhrzeit |
+| Ob eine Antwort Zustimmung ist | Code |
+| Welche Aufgaben eine Antwort meint, welche neu dazukommen | Modell; der Code prüft die Nummern und nennt jede Änderung |
+| Welche Aufgabe als Nächstes dran ist | Code |
+| Ein, zwei Sätze des Status-Agenten dazu | Modell; es sieht nur diese eine Aufgabe |
+
+Der Name des Organisators eines Termins geht an das lokale Modell, wenn es
+eine Antwort auswertet oder der Status-Agent eine Nachricht-Aufgabe nennt.
+
 ## Stand
 
 - Tests mit geskriptetem Modell: bestanden.
@@ -657,3 +763,11 @@ oder Tabelle) schwankt von Lauf zu Lauf.
   (`large-v3-turbo`) erprobt, die Erkennung funktioniert (2026-11-15). Die
   Schwellen für Sprechbeginn und Stille sind gewählt, nicht in lauter Umgebung
   erprobt; die automatischen Tests stellen die Aufnahme nach.
+- Status-Agent gegen die echte Datenbank und `gpt-oss:20b` (2026-11-15):
+  nennt in 3–8 s die dringendste Aufgabe; zwei Läufe hintereinander nannten
+  dieselbe. Die Sätze des Modells stimmten inhaltlich, einmal schrieb es
+  „Naechste" ohne Umlaut. Modellvergleich mit Qwen: Abschnitt
+  [Modell je Agent](#modell-je-agent).
+- Noch offen: Agenten, die Aufgaben selbst erledigen; vom Nutzer ergänzte
+  Aufgaben (`manuell`) erscheinen in `tasks` und beim Status-Agenten, aber
+  nicht in der Planliste und der Kurzfassung des Planungs-Agenten.

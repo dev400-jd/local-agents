@@ -56,6 +56,7 @@ from local_agents.store import (
 AGENT_NAME = "planner"
 PREPARATION = "vorbereitung"
 MOVE = "verschieben"
+APPROVAL = "freigabe"
 DEFAULT_QUESTION = "Plane meine naechste Woche."
 
 
@@ -338,6 +339,11 @@ def main(argv: list[str]) -> int:
             print()
             return 0
     outcome = feedback.handle(answer, deps.store, profile, deps.today, model)
+    # Mit der Antwort gilt der Plan als abgesegnet; darauf baut der Status-Agent auf.
+    approval = deps.store.start_run(APPROVAL)
+    deps.store.finish_run(
+        approval, "ok", f"{outcome.removed} herausgenommen, {outcome.added} ergänzt"
+    )
     print("\n".join([*outcome.lines, outcome.spoken]), flush=True)
     say(outcome.spoken)
     return 0

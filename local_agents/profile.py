@@ -81,6 +81,12 @@ class Profile:
     listen_enabled: bool = True
     listen_model: str = "large-v3-turbo"
     listen_language: str = "de"
+    # Ollama-Modell je Agent (Agentenname -> Modell); fehlt einer, gilt das Standardmodell.
+    models: dict[str, str] = field(default_factory=dict)
+
+    def model_for(self, agent: str) -> str:
+        """Modellname fuer den Agenten, leer fuer das Standardmodell."""
+        return self.models.get(agent, "")
 
     def context_ids(self) -> list[str]:
         """Alle Werte, die ``classify`` liefern kann."""
@@ -234,6 +240,7 @@ def load_profile(path: Path | None = None) -> Profile:
         listen_enabled=bool(data.get("listen", {}).get("enabled", True)),
         listen_model=str(data.get("listen", {}).get("model", "large-v3-turbo")),
         listen_language=str(data.get("listen", {}).get("language", "de")),
+        models={str(agent): str(model) for agent, model in data.get("models", {}).items()},
         plan_skip=tuple(word.casefold() for word in planning.get("skip", [])),
         state=state,
         name=person.get("name", ""),

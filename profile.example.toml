@@ -67,3 +67,9 @@ voice = "Anna"
 enabled = true
 model = "large-v3-turbo"
 language = "de"
+
+# Ollama-Modell je Agent (Agentenname = Modell); ohne Eintrag gilt das
+# Standardmodell (gpt-oss:20b oder LOCAL_AGENTS_MODEL). Messwerte: README,
+# Abschnitt "Status-Agent".
+[models]
+# status = "qwen3.5:9b-q8_0"

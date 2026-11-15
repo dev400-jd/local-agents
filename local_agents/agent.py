@@ -36,9 +36,13 @@ class Deps:
     root: Path
 
 
-def ollama_model() -> OpenAIChatModel:
-    """Erzeugt das lokale Modell; baut noch keine Verbindung auf."""
-    return OpenAIChatModel(MODEL_NAME, provider=OllamaProvider(base_url=OLLAMA_BASE_URL))
+def ollama_model(name: str = "") -> OpenAIChatModel:
+    """Erzeugt das lokale Modell; baut noch keine Verbindung auf.
+
+    Ohne ``name`` ist es das Standardmodell; einzelne Agenten koennen ein
+    anderes bekommen (``[models]`` im Profil).
+    """
+    return OpenAIChatModel(name or MODEL_NAME, provider=OllamaProvider(base_url=OLLAMA_BASE_URL))
 
 
 def answer_with_notes(agent: Agent, question: str, deps, model) -> str:
