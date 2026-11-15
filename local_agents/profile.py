@@ -68,6 +68,15 @@ class Profile:
     plan_skip: tuple[str, ...] = ()
     # Aufgaben "Termin verschieben" sind so viele Tage vor dem Termin faellig.
     move_lead_days: int = 3
+    # Sprachausgabe der Kurzfassung: an/aus und die macOS-Stimme.
+    voice_enabled: bool = True
+    voice: str = "Anna"
+    # Neuronale Stimme (Piper); leer = immer die macOS-Stimme.
+    voice_model: str = "de_DE-thorsten-high"
+    # Sprechtempo (1.0 = normal, groesser = schneller) und Sprecher-Nummer
+    # fuer Piper-Stimmen mit mehreren Sprechern.
+    voice_speed: float = 1.0
+    voice_speaker: int | None = None
 
     def context_ids(self) -> list[str]:
         """Alle Werte, die ``classify`` liefern kann."""
@@ -204,8 +213,20 @@ def load_profile(path: Path | None = None) -> Profile:
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             raise ProfileError(f"{path}: {key} muss eine ganze Zahl ab 0 sein.")
         days[key] = value
+    speech = data.get("voice", {})
+    speed = speech.get("speed", 1.0)
+    if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not 0.5 <= speed <= 2:
+        raise ProfileError(f"{path}: speed in [voice] muss eine Zahl von 0.5 bis 2 sein.")
+    speaker = speech.get("speaker")
+    if speaker is not None and (isinstance(speaker, bool) or not isinstance(speaker, int) or speaker < 0):
+        raise ProfileError(f"{path}: speaker in [voice] muss eine ganze Zahl ab 0 sein.")
     return Profile(
         **days,
+        voice_enabled=bool(speech.get("enabled", True)),
+        voice=str(speech.get("voice", "Anna")),
+        voice_model=str(speech.get("model", "de_DE-thorsten-high")),
+        voice_speed=float(speed),
+        voice_speaker=speaker,
         plan_skip=tuple(word.casefold() for word in planning.get("skip", [])),
         state=state,
         name=person.get("name", ""),

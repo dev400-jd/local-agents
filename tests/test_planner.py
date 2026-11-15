@@ -11,7 +11,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from local_agents import tasks as tasks_cli
 from local_agents.calendar_events import Event
-from local_agents.planner_agent import PlannerDeps, plan_events, run
+from local_agents.planner_agent import PlannerDeps, briefing, plan_events, run
 from local_agents.profile import Context, Profile
 from local_agents.store import CHANGED, DISCARDED, DONE, NEW, OPEN, UNCHANGED, Store
 
@@ -253,6 +253,21 @@ class TestPlannerAgent(unittest.TestCase):
         output = run("Frage", self.deps, scripted_model())
         self.assertIn("Davon 2 Nachrichten, um interne Termine zu verschieben.", output)
         self.assertIn("  - #3 Nachricht an Organisator: Jour fixe (Mi 18.11. 10:00) verschieben", output)
+
+    def test_briefing_covers_open_tasks_of_the_planned_week(self) -> None:
+        self.deps.profile = ONSITE
+        run("Frage", self.deps, scripted_model())
+        self.store.set_status(1, "erledigt")
+        self.deps.today = date(2026, 11, 15)
+        text = briefing(self.deps)
+        self.assertTrue(
+            text.startswith(
+                "Für heute sind zwei Nachrichten eingeplant, an den Organisator, damit die "
+                "internen Termine am Mittwoch verschoben werden."
+            ),
+            text,
+        )
+        self.assertNotIn("Montag und", text)  # die erledigte Vorbereitung fuers Daily fehlt
 
     def test_logs_the_run(self) -> None:
         run("Frage", self.deps, scripted_model())

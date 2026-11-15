@@ -118,6 +118,19 @@ class TestLoadProfile(unittest.TestCase):
     def test_missing_file_gives_empty_profile(self) -> None:
         self.assertEqual(load_profile(Path("/nicht/vorhanden.toml")), Profile())
 
+    def test_voice_settings(self) -> None:
+        profile = load_profile(
+            self.write('[voice]\nenabled = false\nmodel = "de_DE-kerstin-medium"\nspeed = 1.2\nspeaker = 3\n')
+        )
+        self.assertEqual(
+            (profile.voice_enabled, profile.voice_model, profile.voice_speed, profile.voice_speaker),
+            (False, "de_DE-kerstin-medium", 1.2, 3),
+        )
+        self.assertEqual((Profile().voice_model, Profile().voice_speed), ("de_DE-thorsten-high", 1.0))
+        for bad in ("speed = 5", 'speed = "schnell"', "speaker = -1"):
+            with self.assertRaises(ProfileError):
+                load_profile(self.write(f"[voice]\n{bad}\n"))
+
     def test_loads_state(self) -> None:
         profile = load_profile(self.write('[person]\nstate = "he"\n'))
         self.assertEqual(profile.state, "HE")

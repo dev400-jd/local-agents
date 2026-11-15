@@ -26,6 +26,9 @@ python3 -m venv .venv
 .venv/bin/pip install -e .
 ```
 
+Das installiert auch das lokale Sprachmodell Piper für die gesprochene
+Kurzfassung des Planungs-Agenten ([Stimme anpassen](#stimme-anpassen)).
+
 ## Tests
 
 Laufen ohne Ollama; ein geskriptetes Modell ersetzt das lokale Modell.
@@ -257,6 +260,75 @@ move_lead_days = 3          # Nachricht zum Verschieben: Tage vor dem Termin
 skip = ["Company Call"]     # Stichwörter im Titel: keine Aufgabe
 ```
 
+### Gesprochene Kurzfassung
+
+Der ganze Plan steht im Terminal. Danach liest der Agent einen Überblick in
+wenigen Sätzen vor und schließt mit einer Rückfrage:
+
+```text
+Für heute sind zwei Nachrichten eingeplant, an Erika Muster und Max Beispiel,
+damit die internen Termine am Mittwoch verschoben werden. Hinzu kommen drei
+Vorbereitungen für die Termine am Montag. Morgen folgen drei weitere Aufgaben,
+danach noch acht. Der vollste Tag ist Montag mit drei geplanten Terminen.
+Passt das so für dich?
+```
+
+Die Sätze beschreiben, was eingeplant ist, nicht was du tun musst: Die Aufgaben
+sollen später Agenten erledigen. Den Text baut der Code aus festen
+Satzbausteinen (`local_agents/briefing.py`). Vom lokalen Modell geschrieben
+hatte er Grammatikfehler und einmal eine erfundene Uhrzeit. Ein lokales
+Sprachmodell (Piper) spricht ihn (`local_agents/voice.py`), und er steht zum
+Mitlesen unter „Kurzfassung (wird vorgelesen)". Nichts davon verlässt den
+Rechner. Die Rückfrage wird bisher nur gestellt; eine Antwort wertet der Agent
+noch nicht aus.
+
+```bash
+.venv/bin/python -m local_agents.planner_agent --stumm   # ohne Kurzfassung und Ton
+```
+
+### Stimme anpassen
+
+Piper wird mit dem Repo installiert. Die Stimme selbst (eine Datei von 20 bis
+110 MB) lädt der Agent beim ersten Vorlesen einmalig herunter, nach
+`~/.local/share/local-agents/voices` (anderer Ordner: `LOCAL_AGENTS_VOICES`).
+Eingestellt wird alles im Profil:
+
+```toml
+[voice]
+enabled = true                  # false: nie vorlesen
+model = "de_DE-thorsten-high"   # Piper-Stimme
+speed = 1.0                     # Tempo von 0.5 bis 2; 1.2 = etwas schneller
+speaker = 0                     # nur bei Stimmen mit mehreren Sprechern
+voice = "Anna"                  # macOS-Ersatzstimme
+```
+
+Andere Stimme wählen: Namen bei `model` eintragen und ausprobieren. Der Befehl
+spricht einen Testsatz (oder den angegebenen Text) mit den Einstellungen aus
+dem Profil und lädt eine neue Stimme bei Bedarf herunter:
+
+```bash
+.venv/bin/python -m local_agents.voice
+.venv/bin/python -m local_agents.voice "Guten Morgen, die Woche ist geplant."
+```
+
+Deutsche Stimmen im Piper-Katalog (Stand 2026-11-15), Hörproben unter
+<https://rhasspy.github.io/piper-samples/>:
+
+| `model` | Qualität |
+|---|---|
+| `de_DE-thorsten-high` | hoch (Standard) |
+| `de_DE-thorsten-medium`, `de_DE-thorsten-low` | mittel, niedrig; schneller berechnet |
+| `de_DE-thorsten_emotional-medium` | mittel, mehrere Sprechstile über `speaker` |
+| `de_DE-kerstin-medium`, `de_DE-kerstin-low` | mittel, niedrig |
+| `de_DE-mls-medium` | mittel, viele Sprecher über `speaker` |
+| `de_DE-ramona-low`, `de_DE-karlsson-low`, `de_DE-pavoque-low` | niedrig |
+| `de_DE-eva_k-x_low` | sehr niedrig |
+
+Die aktuelle Liste aller Sprachen zeigt
+`.venv/bin/python -m piper.download_voices`. Scheitert Piper oder steht
+`model = ""` im Profil, spricht die macOS-Stimme aus `voice` (Auswahl:
+`say -v '?' | grep de_DE`); sie klingt deutlich künstlicher.
+
 Was in der Datenbank landet, entscheidet der Code. Das Modell wählt nur den
 Zeitraum und kommentiert das Ergebnis; ruft es das Werkzeug nicht auf, plant
 der Agent trotzdem die kommende Woche.
@@ -325,6 +397,7 @@ Felder der Datei:
 | `[[contexts]]` `onsite_days` | nur Kunden: Tage beim Kunden, z. B. `["Mi"]` oder `["Mittwoch", "Fr"]` |
 | `[planning]` `lead_days` | Planungs-Agent: Aufgaben sind so viele Tage vor dem Termin fertig (Standard 1) |
 | `[planning]` `move_lead_days` | Planungs-Agent: Vorlauf der Aufgaben „Nachricht an …, Termin verschieben" (Standard 3) |
+| `[voice]` `enabled`, `model`, `speed`, `speaker`, `voice` | Sprachausgabe, siehe [Stimme anpassen](#stimme-anpassen) |
 | `[planning]` `skip` | Planungs-Agent: Stichwörter im Titel, für die keine Aufgabe entsteht |
 
 Eine fehlerhafte Datei (unbekanntes Bundesland, falsches `kind`, doppelte `id`)

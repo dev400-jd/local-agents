@@ -33,8 +33,8 @@ class Event:
     organizer_domain: str = ""
     attendee_domains: tuple[str, ...] = ()
     # Anzeigename des Organisators, fuer Aufgaben wie "Nachricht an ...".
-    # Bleibt in der Datenbank und in Listen, die der Code druckt; das Modell
-    # bekommt ihn nicht.
+    # Bleibt auf dem Rechner: Datenbank, gedruckte Listen und die Kurzfassung
+    # des lokalen Modells.
     organizer: str = ""
     organizer_is_me: bool = False
     # Kennung des Termins im Kalender; Serientermine teilen sie sich.

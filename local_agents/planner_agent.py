@@ -1,7 +1,11 @@
 """Planungs-Agent: leitet aus den Terminen Aufgaben mit Fertig-bis-Datum ab
 und schreibt sie in die Agenten-Datenbank.
 
-Aufruf: python -m local_agents.planner_agent ["Frage"]
+Aufruf: python -m local_agents.planner_agent [--stumm] ["Frage"]
+
+Nach dem Plan liest der Agent eine kurze Uebersicht der wichtigsten Aufgaben
+vor (lokales Sprachmodell, ersatzweise macOS-Stimme); ``--stumm`` oder ``[voice] enabled = false`` im
+Profil schaltet das ab.
 
 Ohne Frage plant der Agent die kommende Woche. Je Termin entsteht eine Aufgabe
 "Vorbereitung", fertig ``lead_days`` Tage vor dem Termin (Profil, Standard 1).
@@ -23,13 +27,25 @@ from datetime import date, timedelta
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 
+from local_agents import voice
 from local_agents.agent import MODEL_SETTINGS, answer_with_notes, format_notes, ollama_model
+from local_agents.briefing import spoken_summary
 from local_agents.calendar_agent import MAX_RANGE_DAYS, is_holiday_entry
 from local_agents.calendar_events import CalendarAccessError, Event, fetch_events, next_week
 from local_agents.holidays import WEEKDAYS
 from local_agents.planning import is_large_round, move_groups
 from local_agents.profile import Profile, ProfileError, load_profile
-from local_agents.store import CHANGED, DISCARDED, NEW, UNCHANGED, Store, StoredEvent, Task
+from local_agents.store import (
+    CHANGED,
+    DISCARDED,
+    IN_PROGRESS,
+    NEW,
+    OPEN,
+    UNCHANGED,
+    Store,
+    StoredEvent,
+    Task,
+)
 
 AGENT_NAME = "planner"
 PREPARATION = "vorbereitung"
@@ -239,18 +255,45 @@ def run(question: str, deps: PlannerDeps, model) -> str:
     return output
 
 
+def briefing(deps: PlannerDeps) -> str:
+    """Kurzfassung zum Vorlesen: die offenen Aufgaben zu den geplanten Zeitraeumen."""
+    events = [
+        event for plan in deps.plans for event in deps.store.events(plan.start, plan.end)
+    ]
+    ids = {event.id for event in events}
+    tasks = [task for task in deps.store.tasks((OPEN, IN_PROGRESS)) if task.event_id in ids]
+    return spoken_summary(tasks, events, deps.today)
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) > 2:
+    args = [arg for arg in argv[1:] if arg != "--stumm"]
+    silent = len(args) < len(argv) - 1
+    if len(args) > 1:
         print(__doc__, file=sys.stderr)
         return 2
-    question = argv[1] if len(argv) == 2 else DEFAULT_QUESTION
+    question = args[0] if args else DEFAULT_QUESTION
     try:
-        deps = PlannerDeps(today=date.today(), store=Store(), profile=load_profile())
+        profile = load_profile()
+        deps = PlannerDeps(today=date.today(), store=Store(), profile=profile)
         output = run(question, deps, ollama_model())
     except (CalendarAccessError, ProfileError) as exc:
         print(exc, file=sys.stderr)
         return 1
-    print(output)
+    print(output, flush=True)
+    if silent or not profile.voice_enabled:
+        return 0
+    # Erst der ganze Plan zum Lesen, dann die Uebersicht zum Hoeren.
+    summary = briefing(deps)
+    print(f"\n**Kurzfassung (wird vorgelesen)**\n{summary}", flush=True)
+    spoke = voice.speak_with_profile(summary, profile)
+    if not spoke:
+        print("(Sprachausgabe nicht verfügbar.)", file=sys.stderr)
+    elif spoke == "say" and profile.voice_model:
+        print(
+            "(Piper-Stimme nicht verfügbar, macOS-Stimme benutzt. "
+            "Siehe README, Abschnitt Stimme anpassen.)",
+            file=sys.stderr,
+        )
     return 0
 
 

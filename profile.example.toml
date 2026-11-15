@@ -49,3 +49,14 @@ onsite_days = ["Mi"]
 lead_days = 1
 move_lead_days = 3
 skip = []
+
+# Nach dem Planen liest der Planungs-Agent eine kurze Uebersicht vor.
+# Stimmen anzeigen: say -v '?' | grep de_DE
+# model ist die Piper-Stimme; sie wird beim ersten Gebrauch heruntergeladen.
+# Weitere Stimmen und Einstellungen: README, Abschnitt "Stimme anpassen".
+# Mit model = "" spricht die macOS-Stimme aus voice.
+[voice]
+enabled = true
+model = "de_DE-thorsten-high"
+speed = 1.0
+voice = "Anna"
