@@ -27,6 +27,7 @@ und Modellerfahrungen stehen im Schwesterprojekt `opencode-ollama-agents`
 | Terminarten | `local_agents/meeting_types.py` | Katalog: Zweck und übliche Beiträge je Terminart, auch Scrum |
 | Orchestrierung | `local_agents/orchestrator.py` | reicht die nächste Aufgabe von Agent zu Agent weiter |
 | User Stories | `local_agents/stories.py` | liest Features und Stories aus Markdown-Dateien, Wissensbasis für den Daily-Agenten |
+| Scrum Master | `local_agents/scrum_master.py` | fragt nach Neuigkeiten zu User Stories und vermerkt sie für das nächste Daily |
 
 ## Ablauf im Überblick
 
@@ -486,7 +487,8 @@ Repos, weil Termintitel und Kundennamen darin stehen. Anderer Pfad:
 | `events` | Termine, wie der Planungs-Agent sie gesehen hat: Titel, Beginn, Ende, Kontext, Ort, Zahl der Eingeladenen, Name des Organisators |
 | `tasks` | Aufgaben: Art (`kind`), Titel, Kontext, Fertig-bis-Datum, Status, zuständiger Agent, Ergebnis, zugehöriger Termin |
 | `briefs` | Einordnung des Termins hinter einer Aufgabe: Terminart, Begründung, Ergebnisse für den Nutzer, Rolle |
-| `runs` | Protokoll: welcher Agent wann lief, mit Status und Kurzfassung. Einträge: `planner` (Planungslauf), `rueckmeldung` (Antwort mit Änderungen ausgewertet), `freigabe` (Plan abgesegnet), `termin` (Termin eingeordnet) |
+| `story_notes` | Bemerkungen zu User Stories: Story, Feature, Text, Daily-Datum, Status, Kanal, Wortlaut |
+| `runs` | Protokoll: welcher Agent wann lief, mit Status und Kurzfassung. Einträge: `planner` (Planungslauf), `rueckmeldung` (Antwort mit Änderungen ausgewertet), `freigabe` (Plan abgesegnet), `termin` (Termin eingeordnet), `scrum_master` (Nachfrage-Runde) |
 
 Status einer Aufgabe: `offen`, `in_arbeit`, `erledigt`, `verworfen` (Termin
 entfallen) und `abgelehnt` (von dir herausgenommen). Die
@@ -680,6 +682,76 @@ dieser Befehl fragt das Modell; andere Agenten lesen den Index.
   `stories`; je Story verlässlich `name` und `text` (der ganze Abschnitt),
   als Zugabe `key`, `group`, `estimate`, `fields` und `table("Aufgaben")`.
 
+## Scrum-Master-Agent
+
+Er sammelt, was der Daily-Agent später braucht: Er fragt dich, ob es zu einer
+User Story etwas Neues gibt, und vermerkt deine Bemerkung an der Story. Einem
+Daily ordnet er sie nur zu, wenn du das sagst.
+
+```bash
+.venv/bin/python -m local_agents.scrum_master               # nachfragen, im Terminal
+.venv/bin/python -m local_agents.scrum_master --dialog      # nachfragen, als macOS-Dialogfenster
+.venv/bin/python -m local_agents.scrum_master notizen       # offene Bemerkungen
+.venv/bin/python -m local_agents.scrum_master notizen alle  # auch besprochene und entfernte
+.venv/bin/python -m local_agents.scrum_master besprochen 3  # Bemerkung #3 abhaken
+.venv/bin/python -m local_agents.scrum_master entfernt 3    # Bemerkung #3 entfernen
+.venv/bin/python -m local_agents.scrum_master offen 3       # wiederherstellen
+```
+
+```text
+Gibt es etwas Neues zu einer User Story?
+> schreib bitte rein, dass QG-1 und TR-2 am 30.10.2026 abgeschlossen wurden
+Vermerkt:
+- #1 QG-1: Prüfregeln für `bestellung_roh`: QG-1 wurde am 30.10.2026 abgeschlossen
+- #2 TR-2: Bericht bereitstellen: TR-2 wurde am 30.10.2026 abgeschlossen
+Noch etwas zu einer anderen Story?
+> bei QG-1 steht die Abstimmung mit dem Fachbereich noch aus, fürs Daily am Mittwoch
+Vermerkt:
+- #3 QG-1: Prüfregeln für `bestellung_roh`: bei QG-1 steht die Abstimmung mit dem Fachbereich noch aus [Daily Mi 18.11.2026]
+Noch etwas zu einer anderen Story?
+> entferne den letzten Vermerk wieder
+Entfernt: #3
+```
+
+Was eine Antwort bewirkt:
+
+| Antwort | Wirkung |
+|---|---|
+| Bemerkung zu einer oder mehreren Stories | je Story ein Vermerk ohne Daily-Bezug; genannte Tage und Zahlen bleiben im Text |
+| … mit „fürs Daily", „im Daily", „ansprechen", „besprechen" | der Vermerk gehört zu einem Daily: zum genannten Tag, sonst zum nächsten Daily |
+| „entferne/lösche/streiche den Vermerk", „mach das rückgängig" | nimmt die zuletzt vermerkten Bemerkungen zurück; mit Nummer (`#3`, „Bemerkung 3") eine bestimmte |
+| „nein", „nichts Neues", Enter | beendet die Runde |
+
+Architektur:
+
+- **Ablage in der Datenbank** (Tabelle `story_notes`): Story, Feature, Text,
+  Daily-Datum (leer = ohne Daily-Bezug), Status (`offen`, `besprochen`,
+  `entfernt`), Kanal und dein unveränderter Wortlaut. Nicht in den
+  Story-Dateien, denn die werden neu erzeugt. Der Daily-Agent liest später
+  `Store().story_notes(daily_date=…)`. Entfernte Vermerke bleiben in der
+  Datenbank und lassen sich wiederherstellen.
+- **Zuordnung in zwei Stufen.** Was wörtlich in deiner Antwort steht, liest
+  der Code selbst: ein Kürzel wie `QG-3`, den Daily-Bezug und den Tag dazu
+  („am Mittwoch", „morgen", „am 20.11."). Nur wo nichts Eindeutiges steht,
+  entscheidet das lokale Modell anhand der Liste der Story-Namen, etwa bei
+  „die Story mit dem SSO". Der Code prüft, dass es die Story gibt und dass
+  keine Datums- oder Zeitangabe aus deiner Antwort im Text fehlt.
+- **Nächstes Daily:** der nächste geplante Termin mit „Daily" im Titel im
+  Kontext der Story, sonst der nächste Werktag.
+- **Nichts geht verloren.** Passt keine Story oder liefert das Modell nichts
+  Brauchbares, wird dein Wortlaut vermerkt, je genanntem Kürzel einmal oder
+  „ohne Story".
+- **Kanal getrennt vom Agenten.** Fragen und Antworten laufen über einen
+  Kanal mit zwei Funktionen, `ask` und `tell`. Es gibt `TerminalChannel` und
+  `DialogChannel` (macOS-Dialogfenster, braucht kein Terminal). Ein weiterer
+  Kanal, etwa ein Messenger, ist eine Klasse mit diesen zwei Funktionen.
+
+Grenzen: Der Agent läuft, wenn du ihn startest; ein Zeitplan im Hintergrund
+ist noch nicht eingerichtet (der Dialog-Kanal ist dafür gedacht). Nennst du
+mehrere Stories in einem Satz, steht der ganze Satz oft an jeder dieser
+Stories. Bei Stichworten statt Kürzeln rät das Modell. Bearbeiten lässt sich
+ein Vermerk nicht; entferne ihn und sag ihn neu.
+
 ### Modell je Agent
 
 Jeder Agent kann ein eigenes Ollama-Modell bekommen, über den Agentennamen im
@@ -687,7 +759,7 @@ Profil; ohne Eintrag gilt das Standardmodell:
 
 ```toml
 [models]
-status = "qwen3.5:9b-q8_0"   # Agentennamen: status, termin, stories
+status = "qwen3.5:9b-q8_0"   # Agentennamen: status, termin, stories, scrum_master
 ```
 
 Gemessen am Status-Agenten mit 15 offenen Aufgaben (2026-11-15, je 2 Läufe):
@@ -874,6 +946,8 @@ Dasselbe gilt für die neueren Bausteine:
 | Art eines Termins | Modell, aus einem festen Katalog; der Code prüft die Auswahl |
 | Zweck und übliche Beiträge der Terminart | Code (Katalog) |
 | Ergebnisse, die dem Nutzer für den Termin helfen | Modell; nicht geprüft, als Vorschlag zu lesen |
+| Welche Abschnitte einer Datei Stories sind | Code (Kürzel), sonst Modell auf der Überschriftenliste; korrigierbar im Index |
+| Zu welcher Story eine Bemerkung gehört, für welches Daily | Code, wenn Kürzel und Tag wörtlich genannt sind; sonst Modell, vom Code geprüft |
 
 Der Name des Organisators eines Termins geht an das lokale Modell, wenn es
 eine Antwort auswertet oder der Status-Agent eine Nachricht-Aufgabe nennt.
@@ -940,3 +1014,12 @@ eine Antwort auswertet oder der Status-Agent eine Nachricht-Aufgabe nennt.
   eine übersehen. Je Datei 1 bis 6 Sekunden. Dateien ganz anderer Machart
   (andere Autoren, andere Sprache) sind nicht erprobt.
 - Noch nicht angebunden: Daily-Agent und Stand aus dem Projektwerkzeug.
+- Scrum-Master-Agent mit `gpt-oss:20b` gegen die 58 echten Stories und eine
+  Kopie der Datenbank (2026-11-15): Der erste Handtest des Nutzers
+  scheiterte (Vermerk ungefragt einem Daily zugeordnet, Datum aus dem Text
+  gestrichen, „entferne den Vermerk" selbst als Bemerkung gespeichert).
+  Nach der Korrektur lief derselbe Ablauf mit drei weiteren Antworten zweimal
+  richtig durch, je Antwort 1–5 s. Zuordnung über Stichworte ohne Kürzel
+  (drei Fälle in einem früheren Lauf) plausibel, aber nicht gegen den Inhalt
+  geprüft. Das Dialogfenster ist noch nicht von Hand erprobt; ein Zeitplan im
+  Hintergrund fehlt.

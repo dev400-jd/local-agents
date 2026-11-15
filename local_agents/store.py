@@ -1,10 +1,11 @@
 """Agenten-Datenbank: gemeinsamer Arbeitsstand aller Agenten in einer SQLite-Datei.
 
-Vier Tabellen:
+Fuenf Tabellen:
 
 - ``events``: Termine, wie der Planungs-Agent sie gesehen hat.
 - ``tasks``: Aufgaben mit Fertig-bis-Datum, Status und Ergebnis.
 - ``briefs``: Einordnung des Termins hinter einer Aufgabe (Termin-Agent).
+- ``story_notes``: Bemerkungen des Nutzers zu User Stories, je Daily (Scrum Master).
 - ``runs``: Protokoll, welcher Agent wann lief.
 
 Die Datei liegt ausserhalb des Repos (Termintitel, Kundennamen). Agenten laufen
@@ -27,6 +28,10 @@ REJECTED = "abgelehnt"
 STATUSES = (OPEN, IN_PROGRESS, DONE, DISCARDED, REJECTED)
 # Ergebnis von upsert_task.
 NEW, CHANGED, UNCHANGED = "neu", "geaendert", "unveraendert"
+
+# Status einer Bemerkung zu einer Story.
+NOTE_OPEN, NOTE_DONE, NOTE_REMOVED = "offen", "besprochen", "entfernt"
+NOTE_STATUSES = (NOTE_OPEN, NOTE_DONE, NOTE_REMOVED)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -65,6 +70,18 @@ CREATE TABLE IF NOT EXISTS briefs (
     role         TEXT NOT NULL DEFAULT '',
     updated_at   TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS story_notes (
+    id         INTEGER PRIMARY KEY,
+    story      TEXT NOT NULL DEFAULT '',  -- Name der Story, leer = nicht zugeordnet
+    feature    TEXT NOT NULL DEFAULT '',
+    text       TEXT NOT NULL,             -- die Bemerkung
+    daily_date TEXT NOT NULL,             -- fuer welches Daily sie wichtig ist; leer = ohne Daily-Bezug
+    status     TEXT NOT NULL DEFAULT 'offen',
+    raw        TEXT NOT NULL DEFAULT '',  -- Wortlaut der Antwort des Nutzers
+    source     TEXT NOT NULL DEFAULT '',  -- Kanal: terminal, dialog, ...
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS story_notes_daily ON story_notes (daily_date, status);
 CREATE TABLE IF NOT EXISTS runs (
     id          INTEGER PRIMARY KEY,
     agent       TEXT NOT NULL,
@@ -111,6 +128,21 @@ class Brief:
     reason: str
     deliverables: tuple[str, ...]
     role: str = ""
+
+
+@dataclass(frozen=True)
+class StoryNote:
+    """Eine Bemerkung des Nutzers zu einer Story, auf Wunsch fuer ein bestimmtes Daily."""
+
+    id: int
+    story: str
+    feature: str
+    text: str
+    daily_date: date | None  # None = Vermerk ohne Daily-Bezug
+    status: str
+    raw: str = ""
+    source: str = ""
+    created_at: str = ""
 
 
 def db_path() -> Path:
@@ -333,6 +365,67 @@ class Store:
             tuple(json.loads(row["deliverables"])),
             row["role"],
         )
+
+    # --- Bemerkungen zu Stories
+
+    def add_story_note(
+        self,
+        story: str,
+        feature: str,
+        text: str,
+        daily_date: date | None = None,
+        raw: str = "",
+        source: str = "",
+    ) -> StoryNote:
+        now = _now()
+        with self.db:
+            note_id = self.db.execute(
+                "INSERT INTO story_notes (story, feature, text, daily_date, raw, source, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (story, feature, text, daily_date.isoformat() if daily_date else "", raw, source, now),
+            ).lastrowid
+        return StoryNote(note_id, story, feature, text, daily_date, NOTE_OPEN, raw, source, now)
+
+    def story_notes(
+        self, statuses: tuple[str, ...] | None = None, daily_date: date | None = None
+    ) -> list[StoryNote]:
+        """Bemerkungen, die ohne Daily-Bezug zuerst, dann nach Daily-Datum.
+
+        Optional nach Status und Tag gefiltert.
+        """
+        where, args = ["1 = 1"], []
+        if statuses:
+            where.append(f"status IN ({', '.join('?' * len(statuses))})")
+            args.extend(statuses)
+        if daily_date:
+            where.append("daily_date = ?")
+            args.append(daily_date.isoformat())
+        rows = self.db.execute(
+            f"SELECT * FROM story_notes WHERE {' AND '.join(where)} ORDER BY daily_date, id", args
+        )
+        return [
+            StoryNote(
+                row["id"],
+                row["story"],
+                row["feature"],
+                row["text"],
+                date.fromisoformat(row["daily_date"]) if row["daily_date"] else None,
+                row["status"],
+                row["raw"],
+                row["source"],
+                row["created_at"],
+            )
+            for row in rows
+        ]
+
+    def set_note_status(self, note_id: int, status: str) -> bool:
+        if status not in NOTE_STATUSES:
+            raise ValueError(f"Unbekannter Status {status!r}.")
+        with self.db:
+            cursor = self.db.execute(
+                "UPDATE story_notes SET status = ? WHERE id = ?", (status, note_id)
+            )
+        return cursor.rowcount == 1
 
     # --- Laeufe
 
