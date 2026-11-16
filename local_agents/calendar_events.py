@@ -130,6 +130,35 @@ def fetch_events(start: date, end: date) -> list[Event]:
     ]
 
 
+def watch_changes(on_change: Callable[[], None]):
+    """Ruft ``on_change`` auf, sobald macOS eine Aenderung am Kalender meldet.
+
+    Die Meldungen kommen nur an, waehrend ``pump`` laeuft. Der Rueckgabewert
+    muss am Leben bleiben, solange beobachtet wird.
+    """
+    try:
+        import EventKit
+        from Foundation import NSNotificationCenter
+    except ImportError as exc:
+        raise CalendarAccessError(
+            "EventKit fehlt. Installation: pip install -e '.[calendar]' (nur macOS)."
+        ) from exc
+
+    store = EventKit.EKEventStore.alloc().init()
+    _request_access(store)
+    observer = NSNotificationCenter.defaultCenter().addObserverForName_object_queue_usingBlock_(
+        EventKit.EKEventStoreChangedNotification, store, None, lambda notification: on_change()
+    )
+    return store, observer
+
+
+def pump(seconds: float) -> None:
+    """Laesst die Ereignisschleife so lange laufen, damit Kalendermeldungen ankommen."""
+    from Foundation import NSDate, NSRunLoop
+
+    NSRunLoop.currentRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(seconds))
+
+
 def _domain(participant) -> str:
     """Mail-Domain eines EventKit-Teilnehmers, leer ohne Mailadresse."""
     url = "" if participant is None else str(participant.URL() or "")

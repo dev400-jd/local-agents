@@ -59,6 +59,12 @@ skip = []
 # ab (verschobene, abgesagte, neue Termine). Mit false nur beim Planen.
 sync = true
 
+# Kalenderwache (python -m local_agents.watch): gleicht ab, sobald sich der
+# Kalender aendert, und meldet, was sich geaendert hat.
+[watch]
+notify = true    # macOS-Mitteilung
+speak = false    # zusaetzlich vorlesen
+
 # Nach dem Planen liest der Planungs-Agent eine kurze Uebersicht vor.
 # Stimmen anzeigen: say -v '?' | grep de_DE
 # model ist die Piper-Stimme; sie wird beim ersten Gebrauch heruntergeladen.

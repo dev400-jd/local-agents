@@ -525,8 +525,51 @@ nicht geladen), bleibt die Datenbank unverändert und eine Zeile weist darauf
 hin. Von Hand: `.venv/bin/python -m local_agents.sync`. Abschalten: `sync =
 false` unter `[planning]` im Profil; dann gleicht nur der Planungs-Agent ab.
 
-Der Abgleich läuft bisher nur bei einem Aufruf. Einen Hintergrunddienst, der
-auf Kalenderänderungen reagiert, gibt es noch nicht.
+### Kalenderwache: Abgleich im Hintergrund
+
+Die Kalenderwache (`watch.py`) gleicht ab, sobald sich der Kalender ändert,
+ohne dass du etwas aufrufst. macOS meldet jede Änderung
+(`EKEventStoreChangedNotification`); die Wache wartet fünf Sekunden Ruhe ab und
+startet dann denselben Abgleich. Zusätzlich gleicht sie beim Start und alle 30
+Minuten ab, falls eine Meldung verloren ging. Ein Modell braucht sie nicht.
+
+```bash
+.venv/bin/python -m local_agents.watch einrichten   # als Hintergrunddienst einrichten und starten
+.venv/bin/python -m local_agents.watch status       # läuft er? letzte Zeilen des Protokolls
+.venv/bin/python -m local_agents.watch entfernen    # stoppen und entfernen
+.venv/bin/python -m local_agents.watch              # im Vordergrund, zum Ausprobieren
+```
+
+`einrichten` legt einen LaunchAgent an
+(`~/Library/LaunchAgents/local-agents.watch.plist`). Er startet mit der
+Anmeldung und wird nach einem Absturz neu gestartet. Das Protokoll steht in
+`~/Library/Logs/local-agents/watch.log`.
+
+Hat sich etwas geändert, zeigt die Wache eine macOS-Mitteilung mit denselben
+Zeilen wie der Abgleich im Terminal. Einstellungen im Profil, sie gelten ohne
+Neustart:
+
+```toml
+[watch]
+notify = true    # macOS-Mitteilung
+speak = false    # zusätzlich vorlesen (Stimme aus [voice])
+```
+
+Was dabei zu beachten ist:
+
+- **Kalenderfreigabe:** Der Dienst läuft nicht im Terminal, deshalb braucht
+  Python eine eigene Freigabe. macOS fragt beim ersten Start danach; zu sehen
+  unter Systemeinstellungen → Datenschutz & Sicherheit → Kalender. Fehlt sie,
+  meldet die Wache das einmal und beendet sich.
+- **Verzögerung:** Die Meldung kommt erst, wenn macOS die Änderung vom
+  Exchange-Konto geholt hat, je nach Konto Sekunden bis Minuten.
+- **Mitteilungen:** Sie laufen über `osascript`; sind Mitteilungen dafür in
+  den Systemeinstellungen abgeschaltet, bleibt nur das Protokoll.
+- **Gleichzeitige Zugriffe:** Schreibt gerade ein anderer Agent in die
+  Datenbank, überspringt die Wache den Abgleich und holt ihn beim nächsten
+  Anlass nach.
+- **Nach einem Umzug des Repos** oder einer neuen `.venv` einmal neu
+  `einrichten`, weil der Dienst den Pfad zu Python enthält.
 
 ### Die Datenbank
 
@@ -1101,6 +1144,11 @@ eine Antwort auswertet oder der Status-Agent eine Nachricht-Aufgabe nennt.
   verworfen) und einen abgesagten (beide Aufgaben verworfen); ein zweiter Lauf
   änderte nichts. Verschobene Vorkommen von Serien und verlegte Serien sind
   nur in den automatischen Tests nachgestellt.
+- Kalenderwache (2026-11-16): Start im Vordergrund gegen eine Kopie der
+  Datenbank geprüft; ein von `launchd` gestarteter Python-Prozess bekam die
+  Kalenderfreigabe. Der eingerichtete Hintergrunddienst ist vom Nutzer von
+  Hand erprobt (Termin anlegen, verschieben, löschen) und hat funktioniert.
+  Verhalten nach Ruhezustand und Neuanmeldung ist nicht erprobt.
 - Noch offen: Agenten, die Aufgaben selbst erledigen; vom Nutzer ergänzte
   Aufgaben (`manuell`) erscheinen in `tasks` und beim Status-Agenten, aber
   nicht in der Planliste und der Kurzfassung des Planungs-Agenten.
