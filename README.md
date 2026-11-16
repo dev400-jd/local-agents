@@ -5,6 +5,9 @@ Ollama-Modell (`gpt-oss:20b`, 16K Kontext). Ollama-Einrichtung, Speichergrenzen
 und Modellerfahrungen stehen im Schwesterprojekt `opencode-ollama-agents`
 (`docs/setup-macos.md`, `docs/performance.md`).
 
+Was die Agenten heute können, wo ihre Grenzen liegen und woran als Nächstes
+zu arbeiten ist, steht in [docs/stand-und-fahrplan.md](docs/stand-und-fahrplan.md).
+
 | Baustein | Datei | Zweck |
 |---|---|---|
 | Datei-Agent | `local_agents/agent.py` | beantwortet Fragen zu Dateien eines Verzeichnisses |
@@ -18,6 +21,8 @@ und Modellerfahrungen stehen im Schwesterprojekt `opencode-ollama-agents`
 | Planungs-Agent | `local_agents/planner_agent.py` | leitet aus Terminen Aufgaben mit Fertig-bis-Datum ab |
 | Agenten-Datenbank | `local_agents/store.py` | SQLite-Datei mit Terminen, Aufgaben und Läufen |
 | Aufgaben-Befehl | `local_agents/tasks.py` | Aufgaben ansehen und abhaken |
+| Kalenderabgleich | `local_agents/sync.py` | bringt die Datenbank vor jedem Lesen auf den Stand des Kalenders |
+| Kalenderwache | `local_agents/watch.py` | Hintergrunddienst: gleicht ab, sobald sich der Kalender ändert |
 | Kurzfassung | `local_agents/briefing.py` | Überblick über die offenen Aufgaben in wenigen Sätzen, zum Vorlesen |
 | Sprachausgabe | `local_agents/voice.py` | liest Text mit dem lokalen Sprachmodell Piper vor |
 | Spracheingabe | `local_agents/listen.py` | nimmt eine gesprochene Antwort auf und erkennt sie lokal mit Whisper |
