@@ -79,3 +79,12 @@ language = "de"
 # Abschnitt "Status-Agent".
 [models]
 # status = "qwen3.5:9b-q8_0"
+
+# Telegram fuer den Scrum Master: aus, solange enabled nicht true ist.
+# ACHTUNG: Nachrichten laufen ueber die Server von Telegram und verlassen den
+# Rechner. Einrichtung mit "python -m local_agents.telegram_bot einrichten",
+# das traegt diesen Block mit deiner chat_id selbst ein. Siehe README.
+# [telegram]
+# enabled = true
+# chat_id = 123456789
+# ask_at = ["16:30"]        # Uhrzeiten, zu denen der Bot an Werktagen nachfragt

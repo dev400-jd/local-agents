@@ -27,12 +27,14 @@ und Modellerfahrungen stehen im Schwesterprojekt `opencode-ollama-agents`
 | Terminarten | `local_agents/meeting_types.py` | Katalog: Zweck und übliche Beiträge je Terminart, auch Scrum |
 | Orchestrierung | `local_agents/orchestrator.py` | reicht die nächste Aufgabe von Agent zu Agent weiter |
 | User Stories | `local_agents/stories.py` | liest Features und Stories aus Markdown-Dateien, Wissensbasis für den Daily-Agenten |
-| Scrum Master | `local_agents/scrum_master.py` | fragt nach Neuigkeiten zu User Stories und vermerkt sie für das nächste Daily |
+| Scrum Master | `local_agents/scrum_master.py` | fragt nach Neuigkeiten zu User Stories und vermerkt sie, auf Wunsch für ein Daily |
+| Telegram-Kanal | `local_agents/telegram_bot.py` | Bemerkungen an den Scrum Master vom Handy aus; freiwillig, verlässt den Rechner |
 
 ## Ablauf im Überblick
 
 Die Bausteine greifen so ineinander; alles läuft auf dem Rechner, auch Modell,
-Stimme und Spracherkennung:
+Stimme und Spracherkennung. Einzige Ausnahme ist der freiwillige
+[Telegram-Kanal](#telegram-freiwillig) des Scrum Masters:
 
 1. **Planen** (`planner_agent`): liest die Termine der kommenden Woche und
    legt Aufgaben in der Agenten-Datenbank an, je Termin eine Vorbereitung und
@@ -746,11 +748,61 @@ Architektur:
   `DialogChannel` (macOS-Dialogfenster, braucht kein Terminal). Ein weiterer
   Kanal, etwa ein Messenger, ist eine Klasse mit diesen zwei Funktionen.
 
-Grenzen: Der Agent läuft, wenn du ihn startest; ein Zeitplan im Hintergrund
-ist noch nicht eingerichtet (der Dialog-Kanal ist dafür gedacht). Nennst du
+Grenzen: Im Terminal und als Dialogfenster läuft der Agent, wenn du ihn
+startest; von selbst fragt bisher nur der Telegram-Dienst nach. Nennst du
 mehrere Stories in einem Satz, steht der ganze Satz oft an jeder dieser
 Stories. Bei Stichworten statt Kürzeln rät das Modell. Bearbeiten lässt sich
 ein Vermerk nicht; entferne ihn und sag ihn neu.
+
+### Telegram (freiwillig)
+
+> **Datenschutz:** Das ist die einzige Stelle im Projekt, an der Inhalte den
+> Rechner verlassen. Was du dem Bot schreibst und was er antwortet, läuft über
+> die Server von Telegram und ist dort nicht Ende-zu-Ende-verschlüsselt. Der
+> Kanal ist abgeschaltet, bis du ihn einrichtest. Kläre vorher, ob du
+> Projektinhalte eines Kunden über einen privaten Messenger schicken darfst.
+
+Was die Auswirkung begrenzt: Der Bot antwortet nur dem einen Chat aus dem
+Profil und ignoriert alle anderen. Seine Antworten nennen das Kürzel einer
+Story, nicht ihren Namen. Was du selbst schreibst, liegt bei dir. Die
+Auswertung macht weiter das lokale Modell auf deinem Rechner; Telegram
+überträgt nur die Nachrichten.
+
+Einrichtung:
+
+1. In Telegram `@BotFather` öffnen, `/newbot` senden, Namen vergeben. Du
+   bekommst ein Token.
+2. Token im Schlüsselbund ablegen (wird beim Tippen nicht angezeigt):
+   ```bash
+   security add-generic-password -s local-agents-telegram -a "$USER" -w
+   ```
+3. Eigenen Chat festlegen. Der Befehl wartet, bis du dem Bot eine Nachricht
+   schreibst, und trägt `[telegram]` mit deiner `chat_id` ins Profil ein:
+   ```bash
+   .venv/bin/python -m local_agents.telegram_bot einrichten
+   ```
+4. Dienst starten; er läuft, bis du ihn mit Strg+C beendest:
+   ```bash
+   .venv/bin/python -m local_agents.telegram_bot
+   ```
+
+```toml
+[telegram]
+enabled = true          # false: Dienst startet nicht
+chat_id = 123456789     # nur dieser Chat wird beantwortet
+ask_at = ["16:30"]      # der Bot fragt an Werktagen zu diesen Uhrzeiten nach; [] = nie
+```
+
+Im Chat gilt dasselbe wie im Terminal: Jede Nachricht ist eine Antwort an den
+Scrum Master (Bemerkung, „fürs Daily am Dienstag", „entferne das wieder").
+`/notizen` zeigt die offenen Bemerkungen, `/start` eine kurze Hilfe.
+
+Grenzen: Der Dienst läuft nur, solange der Rechner an ist und der Befehl
+läuft; ein automatischer Start beim Anmelden ist nicht eingerichtet.
+Nachrichten aus der Zeit, in der er nicht lief, holt er nicht nach.
+Sprachnachrichten versteht er nicht. Token zurückziehen: bei `@BotFather` mit
+`/revoke`; im Schlüsselbund löschen mit
+`security delete-generic-password -s local-agents-telegram`.
 
 ### Modell je Agent
 
@@ -810,6 +862,7 @@ Felder der Datei:
 | `[planning]` `move_lead_days` | Planungs-Agent: Vorlauf der Aufgaben „Nachricht an …, Termin verschieben" (Standard 3) |
 | `[voice]` `enabled`, `model`, `speed`, `speaker`, `voice` | Sprachausgabe, siehe [Stimme anpassen](#stimme-anpassen) |
 | `[listen]` `enabled`, `model`, `language` | Spracheingabe, siehe [Gesprochene Antwort](#gesprochene-antwort) |
+| `[telegram]` `enabled`, `chat_id`, `ask_at` | Telegram-Kanal des Scrum Masters, siehe [Telegram (freiwillig)](#telegram-freiwillig); ohne Eintrag aus |
 | `[models]` `<agent>` | Ollama-Modell für einen Agenten, siehe [Modell je Agent](#modell-je-agent) |
 | `[planning]` `skip` | Planungs-Agent: Stichwörter im Titel, für die keine Aufgabe entsteht |
 
@@ -1023,3 +1076,6 @@ eine Antwort auswertet oder der Status-Agent eine Nachricht-Aufgabe nennt.
   (drei Fälle in einem früheren Lauf) plausibel, aber nicht gegen den Inhalt
   geprüft. Das Dialogfenster ist noch nicht von Hand erprobt; ein Zeitplan im
   Hintergrund fehlt.
+- Telegram-Kanal (`telegram_bot.py`, 2026-11-15): nur mit nachgestellter
+  Bot-API getestet. Gegen das echte Telegram noch nicht gelaufen, weil kein
+  Bot-Token eingerichtet ist.

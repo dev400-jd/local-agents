@@ -25,6 +25,7 @@ Dialogfenster gibt es; weitere Kanaele (etwa ein Messenger) brauchen nur
 ``ask`` und ``tell``.
 """
 
+import dataclasses
 import re
 import subprocess
 import sys
@@ -42,7 +43,7 @@ from local_agents.holidays import WEEKDAYS, is_public_holiday
 from local_agents.meeting_types import keyword_hint
 from local_agents.profile import Profile, ProfileError, load_profile
 from local_agents.store import NOTE_DONE, NOTE_OPEN, NOTE_REMOVED, Store, StoryNote
-from local_agents.stories import Story, load_features
+from local_agents.stories import STORY_HEADING, Story, load_features
 
 AGENT_NAME = "scrum_master"
 QUESTION = "Gibt es etwas Neues zu einer User Story?"
@@ -322,6 +323,9 @@ class ScrumMaster:
     model: object
     now: datetime
     stories: list[tuple[str, Story]] = field(default_factory=list)
+    # Bemerkungen dieser Runde und die der letzten Antwort (fuer "entferne das wieder").
+    saved: list[StoryNote] = field(default_factory=list)
+    last: list[StoryNote] = field(default_factory=list)
 
     def record(self, answer: str, source: str) -> list[StoryNote]:
         """Ordnet die Antwort ein und speichert die Bemerkungen."""
@@ -386,32 +390,42 @@ class ScrumMaster:
             return "Es gibt keinen Vermerk, den ich entfernen könnte."
         return "Entfernt: " + ", ".join(f"#{number}" for number in removed)
 
+    def respond(self, answer: str, source: str, short: bool = False) -> str | None:
+        """Verarbeitet eine Antwort und gibt die Rueckmeldung dazu; None bei "nichts Neues".
+
+        ``short`` nennt in der Rueckmeldung nur das Kuerzel der Story statt ihres
+        Namens, fuer Kanaele ausserhalb des Rechners.
+        """
+        if is_nothing(answer):
+            return None
+        if is_removal(answer):
+            reply = self.remove(answer, self.last)
+            gone = {note.id for note in self.store.story_notes((NOTE_REMOVED,))}
+            self.saved = [note for note in self.saved if note.id not in gone]
+            self.last = []
+            return reply
+        self.last = self.record(answer, source)
+        self.saved.extend(self.last)
+        return "\n".join(["Vermerkt:", *(note_line(note, short) for note in self.last)])
+
     def check_in(self, channel: Channel) -> list[StoryNote]:
         """Fragt nach, bis nichts mehr kommt; gibt die neuen Bemerkungen zurueck."""
         run_id = self.store.start_run(AGENT_NAME)
-        saved: list[StoryNote] = []
-        last: list[StoryNote] = []
+        self.saved, self.last = [], []
         try:
             question = QUESTION
             for _ in range(MAX_ROUNDS):
                 answer = channel.ask(question)
-                if answer is None or is_nothing(answer):
+                reply = None if answer is None else self.respond(answer, channel.name)
+                if reply is None:
                     break
-                if is_removal(answer):
-                    channel.tell(self.remove(answer, last))
-                    gone = {note.id for note in self.store.story_notes((NOTE_REMOVED,))}
-                    saved = [note for note in saved if note.id not in gone]
-                    last = []
-                else:
-                    last = self.record(answer, channel.name)
-                    saved.extend(last)
-                    channel.tell("\n".join(["Vermerkt:", *(note_line(note) for note in last)]))
+                channel.tell(reply)
                 question = FOLLOW_UP
         except BaseException:
             self.store.finish_run(run_id, "fehler")
             raise
-        self.store.finish_run(run_id, "ok", f"{len(saved)} Bemerkungen über {channel.name}")
-        return saved
+        self.store.finish_run(run_id, "ok", f"{len(self.saved)} Bemerkungen über {channel.name}")
+        return self.saved
 
 
 def is_removal(answer: str) -> bool:
@@ -423,15 +437,19 @@ def _day(day: date) -> str:
     return f"{WEEKDAYS[day.weekday()]} {day:%d.%m.%Y}"
 
 
-def note_line(note: StoryNote) -> str:
+def note_line(note: StoryNote, short: bool = False) -> str:
+    """Eine Bemerkung in einer Zeile; ``short`` nennt nur das Kuerzel der Story."""
     where = note.story or "ohne Story (nicht zugeordnet)"
+    key = STORY_HEADING.match(note.story)
+    if short and key:
+        where = key.group(1)
     tags = [f"Daily {_day(note.daily_date)}"] if note.daily_date else []
     if note.status != NOTE_OPEN:
         tags.append(note.status)
     return f"- #{note.id} {where}: {note.text}" + (f" [{', '.join(tags)}]" if tags else "")
 
 
-def format_notes(notes: list[StoryNote]) -> str:
+def format_notes(notes: list[StoryNote], short: bool = False) -> str:
     """Bemerkungen gruppiert: zuerst die ohne Daily-Bezug, dann je Daily."""
     if not notes:
         return "Keine Bemerkungen."
@@ -441,9 +459,8 @@ def format_notes(notes: list[StoryNote]) -> str:
         if note.daily_date != current:
             current = note.daily_date
             lines.append(f"Daily {_day(current)}" if current else "Vermerke ohne Daily-Bezug")
-        where = note.story or "ohne Story (nicht zugeordnet)"
-        status = "" if note.status == NOTE_OPEN else f" [{note.status}]"
-        lines.append(f"  #{note.id} {where}: {note.text}{status}")
+        line = note_line(dataclasses.replace(note, daily_date=None), short)
+        lines.append("  " + line[2:])
     return "\n".join(lines)
 
 

@@ -87,6 +87,11 @@ class Profile:
     listen_language: str = "de"
     # Ollama-Modell je Agent (Agentenname -> Modell); fehlt einer, gilt das Standardmodell.
     models: dict[str, str] = field(default_factory=dict)
+    # Telegram fuer den Scrum Master: nur auf ausdruecklichen Wunsch, weil die
+    # Nachrichten den Rechner verlassen. Zugelassen ist genau ein Chat.
+    telegram_enabled: bool = False
+    telegram_chat_id: int | None = None
+    telegram_ask_at: tuple[str, ...] = ()  # Uhrzeiten "HH:MM", an denen der Bot nachfragt
 
     def model_for(self, agent: str) -> str:
         """Modellname fuer den Agenten, leer fuer das Standardmodell."""
@@ -231,6 +236,15 @@ def load_profile(path: Path | None = None) -> Profile:
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             raise ProfileError(f"{path}: {key} muss eine ganze Zahl ab 0 sein.")
         days[key] = value
+    telegram = data.get("telegram", {})
+    chat_id = telegram.get("chat_id")
+    if chat_id is not None and (isinstance(chat_id, bool) or not isinstance(chat_id, int)):
+        raise ProfileError(f"{path}: chat_id in [telegram] muss eine ganze Zahl sein.")
+    ask_at = tuple(str(clock) for clock in telegram.get("ask_at", []))
+    for clock in ask_at:
+        hour, _, minute = clock.partition(":")
+        if not (hour.isdigit() and minute.isdigit() and int(hour) < 24 and int(minute) < 60 and len(minute) == 2):
+            raise ProfileError(f"{path}: ask_at in [telegram] braucht Uhrzeiten wie \"16:30\".")
     speech = data.get("voice", {})
     speed = speech.get("speed", 1.0)
     if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not 0.5 <= speed <= 2:
@@ -249,6 +263,9 @@ def load_profile(path: Path | None = None) -> Profile:
         listen_model=str(data.get("listen", {}).get("model", "large-v3-turbo")),
         listen_language=str(data.get("listen", {}).get("language", "de")),
         models={str(agent): str(model) for agent, model in data.get("models", {}).items()},
+        telegram_enabled=bool(telegram.get("enabled", False)),
+        telegram_chat_id=chat_id,
+        telegram_ask_at=tuple(f"{int(c.split(':')[0]):02d}:{c.split(':')[1]}" for c in ask_at),
         plan_skip=tuple(word.casefold() for word in planning.get("skip", [])),
         state=state,
         name=person.get("name", ""),
