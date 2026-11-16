@@ -1,0 +1,109 @@
+# Erfundene Faelle fuer die Rueckmeldung auf den Plan. Aufbau: README, Abschnitt "Messen".
+# Die Aufgaben bekommen die Nummern 1, 2, 3 ... in der Reihenfolge der Datei.
+agent = "rueckmeldung"
+heute = 2026-11-20   # ein Freitag
+
+[[aufgabe]]   # 1
+titel = "Vorbereitung: Daily (Mo 23.11. 09:00)"
+faellig = 2026-11-22
+
+[[aufgabe]]   # 2
+titel = "Vorbereitung: Jour fixe (Mo 23.11. 14:00)"
+faellig = 2026-11-22
+
+[[aufgabe]]   # 3
+titel = "Vorbereitung: Architekturrunde (Di 24.11. 10:00)"
+faellig = 2026-11-23
+
+[[aufgabe]]   # 4
+titel = "Nachricht an Kim Beispiel: Teamrunde (Mi 25.11. 11:00) verschieben, weil Kundentag"
+faellig = 2026-11-22
+
+[[aufgabe]]   # 5
+titel = "Vorbereitung: Teamrunde (Mi 25.11. 11:00)"
+faellig = 2026-11-24
+
+[[aufgabe]]   # 6
+titel = "Vorbereitung: Sprint Review (Do 26.11. 15:00)"
+faellig = 2026-11-25
+
+# --- Zustimmung und nichts aendern
+
+[[fall]]
+name = "Schlichtes Ja ändert nichts"
+eingabe = "ja passt so"
+raus = []
+
+[[fall]]
+name = "Ausdrücklich nichts ändern"
+eingabe = "bitte nichts ändern, das ist alles richtig so"
+raus = []
+
+# --- Herausnehmen
+
+[[fall]]
+name = "Eine Aufgabe über den Terminnamen"
+eingabe = "die Vorbereitung fürs Daily brauche ich nicht"
+raus = [1]
+
+[[fall]]
+name = "Eine Aufgabe über die Nummer"
+eingabe = "nimm Aufgabe 4 raus"
+raus = [4]
+
+[[fall]]
+name = "Alle Vorbereitungen eines Tages"
+eingabe = "alle Vorbereitungen für Montag raus"
+raus = [1, 2]
+
+[[fall]]
+name = "Beide Aufgaben zu einem Termin"
+eingabe = "die Teamrunde komplett raus, beide Aufgaben dazu"
+raus = [4, 5]
+
+[[fall]]
+name = "Zustimmung mit einer Ausnahme"
+eingabe = "passt, aber die Architekturrunde bereite ich nicht vor"
+raus = [3]
+
+# --- Ergaenzen
+
+[[fall]]
+name = "Neue Aufgabe bis zu einem Wochentag"
+eingabe = "zusätzlich bis Dienstag die Folien für den Vorstand fertig machen"
+raus = []
+[[fall.neu]]
+titel_enthaelt = "Folien"
+faellig = 2026-11-24
+
+[[fall]]
+name = "Neue Aufgabe morgen"
+eingabe = "ich muss morgen noch die Reisekosten einreichen"
+raus = []
+[[fall.neu]]
+titel_enthaelt = "Reisekosten"
+faellig = 2026-11-21
+
+[[fall]]
+name = "Neue Aufgabe ohne Tag ist heute fällig"
+eingabe = "füg noch hinzu: Angebot prüfen"
+raus = []
+[[fall.neu]]
+titel_enthaelt = "Angebot"
+faellig = 2026-11-20
+
+[[fall]]
+name = "Herausnehmen und ergänzen in einer Antwort"
+eingabe = "die Vorbereitung zum Sprint Review raus, dafür bis zum 25. die Demo aufsetzen"
+raus = [6]
+[[fall.neu]]
+titel_enthaelt = "Demo"
+faellig = 2026-11-25
+
+# --- Unklares
+
+[[fall]]
+name = "Unklare Antwort ändert nichts und fragt nach"
+eingabe = "das mit dem Dings am Nachmittag passt mir nicht"
+raus = []
+unklar = true

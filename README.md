@@ -23,6 +23,7 @@ zu arbeiten ist, steht in [docs/stand-und-fahrplan.md](docs/stand-und-fahrplan.m
 | Aufgaben-Befehl | `local_agents/tasks.py` | Aufgaben ansehen und abhaken |
 | Kalenderabgleich | `local_agents/sync.py` | bringt die Datenbank vor jedem Lesen auf den Stand des Kalenders |
 | Kalenderwache | `local_agents/watch.py` | Hintergrunddienst: gleicht ab, sobald sich der Kalender ändert |
+| Messung | `local_agents/evals.py` | lässt Agenten gegen feste Fälle mit bekannter richtiger Antwort laufen |
 | Kurzfassung | `local_agents/briefing.py` | Überblick über die offenen Aufgaben in wenigen Sätzen, zum Vorlesen |
 | Sprachausgabe | `local_agents/voice.py` | liest Text mit dem lokalen Sprachmodell Piper vor |
 | Spracheingabe | `local_agents/listen.py` | nimmt eine gesprochene Antwort auf und erkennt sie lokal mit Whisper |
@@ -1104,6 +1105,120 @@ Dasselbe gilt für die neueren Bausteine:
 Der Name des Organisators eines Termins geht an das lokale Modell, wenn es
 eine Antwort auswertet oder der Status-Agent eine Nachricht-Aufgabe nennt.
 
+## Messen
+
+Die Tests unter `tests/` prüfen den Code mit einem geskripteten Modell. Ob das
+echte lokale Modell richtig antwortet, misst `evals.py`: Es lässt einen Agenten
+gegen feste Fälle laufen, bei denen die richtige Antwort bekannt ist. Weil das
+Modell nicht jedes Mal gleich antwortet, läuft jeder Fall mehrfach, und das
+Ergebnis ist eine Quote.
+
+```bash
+.venv/bin/python -m local_agents.evals                    # alle Agenten mit Fällen
+.venv/bin/python -m local_agents.evals scrum_master       # nur dieser Agent
+.venv/bin/python -m local_agents.evals --laeufe 5         # jeden Fall fünfmal (Standard 3)
+.venv/bin/python -m local_agents.evals --modell qwen3.5:9b-q8_0
+.venv/bin/python -m local_agents.evals --fall Daily       # nur Fälle mit "Daily" im Namen
+.venv/bin/python -m local_agents.evals --liste            # Fälle zeigen, nichts ausführen
+```
+
+Ollama muss laufen. Ein Messlauf beider Agenten (28 Fälle, je dreimal) dauert
+gut zwei Minuten. Das Programm endet mit 1, wenn ein Fall nicht in jedem Lauf besteht.
+
+```text
+scrum_master · gpt-oss:20b · 3 Läufe je Fall · Stand a407750
+  ✓ 3/3    2.4 s  Kürzel und schlichter Text
+  ~ 2/3    3.1 s  Daily an einem Wochentag
+        Lauf 2: IM-2: Daily 2026-11-19 erwartet, 2026-11-17 vermerkt
+Fälle immer bestanden: 15 von 16 · Läufe bestanden: 47 von 48 · Dauer 2:10 min
+Gegenüber dem letzten Lauf (15.11.2026 10:00, Stand 0e8cf6a):
+  schlechter: Daily an einem Wochentag (3/3 → 2/3)
+```
+
+`✓` heißt in jedem Lauf bestanden, `~` manchmal, `✗` nie. Ein Fall mit `~` ist
+die wichtigste Zeile: Dort ist das Modell unzuverlässig.
+
+Gemessen wird der ganze Weg einer Eingabe, also Modell und Code zusammen.
+Geprüft wird mit Code am Endzustand, nicht mit einem zweiten Modell:
+
+| Agent | Geprüft wird |
+|---|---|
+| `scrum_master` | Zahl der Bemerkungen, zugeordnete Story, Daily-Datum, Angaben im Text, zurückgenommene Vermerke |
+| `rueckmeldung` | herausgenommene Aufgaben (genau diese), neue Aufgaben mit Fälligkeit, Rückfrage bei Unklarem |
+
+### Fälle
+
+Fälle stehen als TOML-Dateien an zwei Orten, beide werden gelesen:
+
+- `evals/` im Repo: erfundene Fälle.
+- `~/.local/share/local-agents/evals/` (anderer Ort: `LOCAL_AGENTS_EVALS`):
+  echte Fälle aus dem Alltag. Sie enthalten Story-Inhalte und Termintitel und
+  bleiben deshalb außerhalb des Repos.
+
+Geht im Alltag etwas schief, wird daraus zuerst ein Fall und dann die
+Korrektur. So wächst die Sammlung an den Stellen, an denen das Modell wirklich
+Fehler macht.
+
+Eine Datei gilt für einen Agenten und ein festes „heute". Für den Scrum Master:
+
+```toml
+agent = "scrum_master"
+heute = 2026-11-16                 # Wochentage und "morgen" beziehen sich darauf
+
+[[story]]                          # die Stories, die der Agent kennt
+kuerzel = "QG-3"
+titel = "Freigabe der Schnittstelle"
+feature = "Bestellimport"
+# statt [[story]] geht auch ein Ordner: stories_dir = "~/pfad/zu/stories"
+
+[[fall]]
+name = "Datum bleibt im Text, kein Daily erfunden"
+vorher = []                        # frühere Antworten derselben Runde, ungeprüft
+eingabe = "Bei QG-3 warten wir bis 24.11. auf die Freigabe"
+entfernt = 0                       # so viele Vermerke sind danach zurückgenommen
+[[fall.erwartet]]                  # je erwarteter Bemerkung ein Block
+story = "QG-3"                     # Kürzel, sonst Name; "" = keiner Story zugeordnet
+daily = false                      # false = ohne Daily-Bezug, sonst ein Datum
+enthaelt = ["24.11."]              # muss im Text stehen
+enthaelt_nicht = []                # darf nicht im Text stehen
+```
+
+Für die Rückmeldung auf den Plan:
+
+```toml
+agent = "rueckmeldung"
+heute = 2026-11-20
+
+[[aufgabe]]                        # bekommt die Nummer 1, die nächste 2 usw.
+titel = "Vorbereitung: Daily (Mo 23.11. 09:00)"
+faellig = 2026-11-22
+
+[[fall]]
+name = "Herausnehmen und ergänzen in einer Antwort"
+eingabe = "die Vorbereitung fürs Daily raus, dafür bis zum 25. die Demo aufsetzen"
+raus = [1]                         # genau diese Nummern sind danach abgelehnt
+unklar = false                     # ob der Agent etwas nicht verstanden meldet
+[[fall.neu]]                       # je erwarteter neuer Aufgabe ein Block
+titel_enthaelt = "Demo"
+faellig = 2026-11-25
+```
+
+Felder, die fehlen, werden nicht geprüft; die Zahl der Bemerkungen, `raus` und
+die Zahl neuer Aufgaben werden immer geprüft.
+
+### Ergebnisse und Vergleich
+
+Jeder vollständige Messlauf wird als Zeile in
+`~/.local/share/local-agents/evals/ergebnisse.jsonl` festgehalten: Zeit, Agent,
+Modell, Code-Stand (Commit, mit `+` bei ungespeicherten Änderungen) und je Fall
+die bestandenen Läufe. Die Ausgabe vergleicht mit dem letzten Lauf desselben
+Agenten mit demselben Modell. Läufe mit `--fall` werden nicht festgehalten,
+weil sie nur einen Teil der Fälle messen.
+
+Grenzen: Mit einem guten Dutzend Fällen je Agent zeigt die Messung Rückschritte
+und grobe Unterschiede zwischen Modellen, keine feinen. Für Status-Agent,
+Termin-Agent und Story-Erkennung gibt es noch keine Fälle.
+
 ## Stand
 
 - Tests mit geskriptetem Modell: bestanden.
@@ -1154,6 +1269,15 @@ eine Antwort auswertet oder der Status-Agent eine Nachricht-Aufgabe nennt.
   Kalenderfreigabe. Der eingerichtete Hintergrunddienst ist vom Nutzer von
   Hand erprobt (Termin anlegen, verschieben, löschen) und hat funktioniert.
   Verhalten nach Ruhezustand und Neuanmeldung ist nicht erprobt.
+- Erste Messung mit `gpt-oss:20b`, erfundene Fälle, je drei Läufe (2026-11-16):
+  - Scrum Master: 15 von 16 Fällen immer bestanden, 47 von 48 Läufen. Einmal
+    blieb die Bitte („schreib bitte rein, dass") im Text der Bemerkung.
+  - Rückmeldung auf den Plan: 9 von 12 Fällen immer bestanden, 30 von 36
+    Läufen. Zwei Schwächen, beide noch nicht behoben: Bei „bis Dienstag" und
+    „bis zum 25." stimmt die Fälligkeit der neuen Aufgabe nicht immer (einmal
+    heute, einmal eine Woche zu spät), und eine unklare Antwort („das mit dem
+    Dings passt mir nicht") führte in allen drei Läufen dazu, dass eine
+    Aufgabe herausgenommen wurde, statt nachzufragen.
 - Noch offen: Agenten, die Aufgaben selbst erledigen; vom Nutzer ergänzte
   Aufgaben (`manuell`) erscheinen in `tasks` und beim Status-Agenten, aber
   nicht in der Planliste und der Kurzfassung des Planungs-Agenten.

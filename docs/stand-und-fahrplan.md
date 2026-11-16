@@ -9,7 +9,7 @@ beschrieben ist, zieht die betroffene Zeile nach und setzt das Datum oben neu.
 
 ## Bestand
 
-Zehn Agenten und Bausteine lesen Kalender, Asana und Story-Dateien, machen
+Elf Agenten und Bausteine lesen Kalender, Asana und Story-Dateien, machen
 daraus Aufgaben und Notizen und sprechen mit dem Nutzer. Keiner davon erledigt
 bisher selbst eine Aufgabe.
 
@@ -24,6 +24,7 @@ bisher selbst eine Aufgabe.
 | Story-Leser | `stories.py` | Liest User Stories aus Markdown unabhängig vom Aufbau der Dateien | Nur Markdown im Ordner, kein Anschluss an das Projektwerkzeug. Erkennt keine Änderungen zwischen zwei Ständen. |
 | Scrum Master | `scrum_master.py`, `telegram_bot.py` | Vermerkt Bemerkungen je Story, auf Wunsch fürs nächste Daily, per Terminal, Dialog oder Telegram | Beantwortet keine Fragen. Ein Satz zu mehreren Stories landet ganz bei jeder. Der Daily-Bezug hängt an Stichwörtern. |
 | Sprache | `voice.py`, `listen.py` | Vorlesen (Piper) und Zuhören (Whisper), beides lokal | Kein durchgehendes Gespräch, nur Frage und Antwort an einer Stelle im Planungs-Agenten. |
+| Messung | `evals.py` | Lässt Scrum Master und Rückmeldung gegen feste Fälle laufen, mehrfach, mit Quote und Vergleich zum letzten Lauf | 28 erfundene Fälle, noch keine echten. Keine Fälle für Status-Agent, Termin-Agent und Story-Erkennung. |
 | Profil und Datenbank | `profile.py`, `store.py` | Gemeinsames Gedächtnis: Kontexte, Rolle, Stresslevel, Aufgaben, Notizen, Laufprotokoll | Kein Gedächtnis über Gespräche, keine gelernten Vorlieben. |
 
 ## Fahrplan je Kategorie
@@ -55,6 +56,15 @@ Die Labs verbessern Agenten über feste Testfälle mit Bewertung, nicht über
 Eindrücke. Hier gibt es viele Code-Tests, aber kaum Messungen der
 Modellantworten. Nötig ist je Agent ein kleiner Satz echter Fälle mit
 erwarteter Antwort, gegen den jedes Modell und jede Prompt-Änderung läuft.
+
+Stand 2026-11-16: Das Messprogramm steht (`evals.py`, README-Abschnitt
+„Messen") mit erfundenen Fällen für Scrum Master und Rückmeldung. Die erste
+Messung fand zwei Schwächen der Rückmeldung (Fälligkeit bei Wochentagen,
+unklare Antworten nehmen eine Aufgabe heraus). Als Nächstes:
+
+- die beiden Schwächen beheben und nachmessen
+- echte Fälle aus dem Alltag sammeln
+- Fälle für Status-Agent, Termin-Agent und Story-Erkennung
 
 ### 4. Verlässlichkeit des kleinen Modells
 
