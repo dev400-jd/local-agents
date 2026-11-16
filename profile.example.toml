@@ -55,6 +55,9 @@ onsite_days = ["Mi"]
 lead_days = 1
 move_lead_days = 3
 skip = []
+# Vor jedem Lesen der Aufgaben gleicht der Code die Datenbank mit dem Kalender
+# ab (verschobene, abgesagte, neue Termine). Mit false nur beim Planen.
+sync = true
 
 # Nach dem Planen liest der Planungs-Agent eine kurze Uebersicht vor.
 # Stimmen anzeigen: say -v '?' | grep de_DE

@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 
 from pydantic_ai import Agent, RunContext
 
+from local_agents import sync
 from local_agents.agent import MODEL_SETTINGS, answer_with_notes, ollama_model
 from local_agents.holidays import WEEKDAYS
 from local_agents.profile import Profile, ProfileError, load_profile
@@ -207,6 +208,7 @@ def main(argv: list[str]) -> int:
         print(exc, file=sys.stderr)
         return 1
     deps = StatusDeps(now=datetime.now(), store=Store(), profile=profile)
+    sync.refresh(deps.store, profile, deps.now)
     print(answer(question, deps, ollama_model(profile.model_for(AGENT_NAME))))
     return 0
 

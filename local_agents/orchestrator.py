@@ -16,7 +16,7 @@ Einordnung gespeichert ist.
 import sys
 from datetime import datetime
 
-from local_agents import meeting_agent, status_agent
+from local_agents import meeting_agent, status_agent, sync
 from local_agents.agent import format_notes, ollama_model
 from local_agents.profile import Profile, ProfileError, load_profile
 from local_agents.store import Store
@@ -58,10 +58,12 @@ def main(argv: list[str]) -> int:
     except ProfileError as exc:
         print(exc, file=sys.stderr)
         return 1
+    now, store = datetime.now(), Store()
+    sync.refresh(store, profile, now)
     print(
         run(
-            datetime.now(),
-            Store(),
+            now,
+            store,
             profile,
             lambda agent: ollama_model(profile.model_for(agent)),
             fresh="--neu" in argv,

@@ -1,8 +1,10 @@
 """Agenten-Datenbank: gemeinsamer Arbeitsstand aller Agenten in einer SQLite-Datei.
 
-Fuenf Tabellen:
+Sechs Tabellen:
 
 - ``events``: Termine, wie der Planungs-Agent sie gesehen hat.
+- ``planned_days``: Tage, die schon geplant wurden; nur dort legt der
+  Kalenderabgleich fuer neue Termine Aufgaben an.
 - ``tasks``: Aufgaben mit Fertig-bis-Datum, Status und Ergebnis.
 - ``briefs``: Einordnung des Termins hinter einer Aufgabe (Termin-Agent).
 - ``story_notes``: Bemerkungen des Nutzers zu User Stories, je Daily (Scrum Master).
@@ -16,7 +18,7 @@ import json
 import os
 import sqlite3
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 DEFAULT_DB_PATH = Path.home() / ".local" / "share" / "local-agents" / "agents.db"
@@ -35,7 +37,7 @@ NOTE_STATUSES = (NOTE_OPEN, NOTE_DONE, NOTE_REMOVED)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
-    id         TEXT PRIMARY KEY,   -- Kalender-Kennung und Beginn
+    id         TEXT PRIMARY KEY,   -- Kalender-Kennung und urspruenglicher Beginn
     title      TEXT NOT NULL,
     start      TEXT NOT NULL,      -- lokale Zeit, ISO 8601
     end        TEXT NOT NULL,
@@ -44,6 +46,9 @@ CREATE TABLE IF NOT EXISTS events (
     attendees  INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL,
     organizer  TEXT NOT NULL DEFAULT ''   -- Anzeigename des Einladenden
+);
+CREATE TABLE IF NOT EXISTS planned_days (
+    day TEXT PRIMARY KEY               -- ISO-Datum
 );
 CREATE TABLE IF NOT EXISTS tasks (
     id         INTEGER PRIMARY KEY,
@@ -165,6 +170,13 @@ class Store:
         # Datenbanken aus der Zeit vor der Spalte nachziehen.
         if "organizer" not in {row["name"] for row in self.db.execute("PRAGMA table_info(events)")}:
             self.db.execute("ALTER TABLE events ADD COLUMN organizer TEXT NOT NULL DEFAULT ''")
+        # Vor der Tabelle planned_days wurde wochenweise geplant: Die Wochen der
+        # gespeicherten Termine gelten als geplant.
+        if self.db.execute("SELECT 1 FROM planned_days LIMIT 1").fetchone() is None:
+            for row in self.db.execute("SELECT DISTINCT date(start) AS day FROM events").fetchall():
+                day = date.fromisoformat(row["day"])
+                monday = day - timedelta(days=day.weekday())
+                self.mark_planned(monday, monday + timedelta(days=6))
 
     def close(self) -> None:
         self.db.close()
@@ -212,6 +224,29 @@ class Store:
             )
             for row in rows
         ]
+
+    def rekey_event(self, old_id: str, new_id: str) -> None:
+        """Gibt einem Termin eine neue Kennung; seine Aufgaben wandern mit."""
+        with self.db:
+            self.db.execute(
+                "INSERT INTO events (id, title, start, end, context, location, attendees, "
+                "organizer, updated_at) SELECT ?, title, start, end, context, location, "
+                "attendees, organizer, updated_at FROM events WHERE id = ?",
+                (new_id, old_id),
+            )
+            self.db.execute("UPDATE tasks SET event_id = ? WHERE event_id = ?", (new_id, old_id))
+            self.db.execute("DELETE FROM events WHERE id = ?", (old_id,))
+
+    def mark_planned(self, start: date, end: date) -> None:
+        """Merkt die Tage von ``start`` bis einschliesslich ``end`` als geplant."""
+        days = [(start + timedelta(days=offset)).isoformat() for offset in range((end - start).days + 1)]
+        with self.db:
+            self.db.executemany("INSERT OR IGNORE INTO planned_days (day) VALUES (?)", [(d,) for d in days])
+
+    def planned_days(self, start: date) -> set[date]:
+        """Geplante Tage ab ``start``."""
+        rows = self.db.execute("SELECT day FROM planned_days WHERE day >= ?", (start.isoformat(),))
+        return {date.fromisoformat(row["day"]) for row in rows}
 
     def drop_events(self, start: date, end: date, keep: set[str]) -> int:
         """Entfernt Termine des Zeitraums, die es nicht mehr gibt (abgesagt, verschoben).

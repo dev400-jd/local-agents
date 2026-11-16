@@ -72,6 +72,8 @@ class Profile:
     plan_skip: tuple[str, ...] = ()
     # Aufgaben "Termin verschieben" sind so viele Tage vor dem Termin faellig.
     move_lead_days: int = 3
+    # Vor dem Lesen der Aufgaben den Kalender abgleichen (sync.py).
+    sync_enabled: bool = True
     # Sprachausgabe der Kurzfassung: an/aus und die macOS-Stimme.
     voice_enabled: bool = True
     voice: str = "Anna"
@@ -267,6 +269,7 @@ def load_profile(path: Path | None = None) -> Profile:
         telegram_chat_id=chat_id,
         telegram_ask_at=tuple(f"{int(c.split(':')[0]):02d}:{c.split(':')[1]}" for c in ask_at),
         plan_skip=tuple(word.casefold() for word in planning.get("skip", [])),
+        sync_enabled=bool(planning.get("sync", True)),
         state=state,
         name=person.get("name", ""),
         employer=person.get("employer", ""),

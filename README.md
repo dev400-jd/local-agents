@@ -51,6 +51,10 @@ Stimme und Spracherkennung. Einzige Ausnahme ist der freiwillige
    die dir in deiner Rolle dafür helfen. Agenten, die diese Ergebnisse
    erarbeiten, gibt es noch nicht.
 
+Zwischen Planen und Abarbeiten ändert sich der Kalender. Deshalb gleicht der
+Code die Datenbank vor jedem Lesen der Aufgaben mit dem Kalender ab, siehe
+[Kalenderabgleich](#kalenderabgleich).
+
 ```bash
 .venv/bin/python -m local_agents.planner_agent   # Schritte 1 bis 3
 .venv/bin/python -m local_agents.orchestrator    # Schritt 4
@@ -478,6 +482,52 @@ der Agent trotzdem die kommende Woche.
 .venv/bin/python -m local_agents.tasks abgelehnt 12  # herausnehmen, wird nicht neu angelegt
 ```
 
+### Kalenderabgleich
+
+Der Planungs-Agent sieht den Kalender nur, wenn er läuft. Damit der
+Status-Agent keine Aufgabe zu einem Termin nennt, der inzwischen verschoben
+oder abgesagt wurde, gleicht `sync.py` die Datenbank mit dem Kalender ab, bevor
+`status_agent`, `orchestrator` und `tasks` (beim Auflisten) Aufgaben lesen. Der
+Abgleich braucht kein Modell und dauert Sekundenbruchteile. Hat sich etwas
+geändert, steht es vor der Ausgabe:
+
+```text
+Kalender abgeglichen: 1 Termin verschoben, 1 Aufgabe angepasst, 1 Aufgabe verworfen.
+  verschoben: Review von Di 17.11. 10:00 auf Do 19.11. 14:00
+```
+
+Für Termine ab heute gilt:
+
+- **Verschoben:** Die Aufgabe bleibt mit Status, Ablehnung und Einordnung des
+  Termin-Agenten erhalten; Titel und Fertig-bis-Datum ziehen nach. Muss der
+  Termin danach nicht mehr weichen, wird seine Aufgabe „Nachricht an
+  <Organisator>" verworfen.
+- **Abgesagt:** Offene Aufgaben werden verworfen, erledigte bleiben stehen.
+- **Neu:** Der Termin bekommt Aufgaben wie beim Planen, aber nur an Tagen, die
+  schon geplant wurden, und nur, wenn er noch nicht begonnen hat. Ungeplante
+  Wochen bleiben dem Planungs-Agenten überlassen.
+
+Einen verschobenen Termin erkennt der Abgleich so wieder:
+
+| Fall | Erkennungsmerkmal |
+|---|---|
+| Einzeltermin verschoben | gleiche Kalender-Kennung, genau ein alter und ein neuer Eintrag |
+| einzelnes Vorkommen einer Serie verschoben | Der Kalender führt es als geändertes Vorkommen mit eigener Kennung; der ursprüngliche Beginn und der Titel stimmen mit dem verschwundenen Eintrag überein |
+| ganze Serie verlegt | gleiche Kennung und im Zeitraum gleich viele alte wie neue Vorkommen |
+
+Passt keiner der Fälle, gilt der alte Termin als entfallen und der neue als
+neu. Das trifft zum Beispiel zu, wenn ein Vorkommen einer Serie verschoben und
+zugleich umbenannt wurde. Der Abgleich sucht bis vier Wochen hinter dem letzten
+bekannten Termin; weiter weg verschobene Termine gelten als entfallen.
+
+Ist der Kalender nicht lesbar oder liefert er gar keine Termine (Konto gerade
+nicht geladen), bleibt die Datenbank unverändert und eine Zeile weist darauf
+hin. Von Hand: `.venv/bin/python -m local_agents.sync`. Abschalten: `sync =
+false` unter `[planning]` im Profil; dann gleicht nur der Planungs-Agent ab.
+
+Der Abgleich läuft bisher nur bei einem Aufruf. Einen Hintergrunddienst, der
+auf Kalenderänderungen reagiert, gibt es noch nicht.
+
 ### Die Datenbank
 
 Eine SQLite-Datei unter `~/.local/share/local-agents/agents.db`, außerhalb des
@@ -487,10 +537,11 @@ Repos, weil Termintitel und Kundennamen darin stehen. Anderer Pfad:
 | Tabelle | Inhalt |
 |---|---|
 | `events` | Termine, wie der Planungs-Agent sie gesehen hat: Titel, Beginn, Ende, Kontext, Ort, Zahl der Eingeladenen, Name des Organisators |
+| `planned_days` | Tage, die schon geplant wurden; nur dort legt der Kalenderabgleich Aufgaben für neue Termine an |
 | `tasks` | Aufgaben: Art (`kind`), Titel, Kontext, Fertig-bis-Datum, Status, zuständiger Agent, Ergebnis, zugehöriger Termin |
 | `briefs` | Einordnung des Termins hinter einer Aufgabe: Terminart, Begründung, Ergebnisse für den Nutzer, Rolle |
 | `story_notes` | Bemerkungen zu User Stories: Story, Feature, Text, Daily-Datum, Status, Kanal, Wortlaut |
-| `runs` | Protokoll: welcher Agent wann lief, mit Status und Kurzfassung. Einträge: `planner` (Planungslauf), `rueckmeldung` (Antwort mit Änderungen ausgewertet), `freigabe` (Plan abgesegnet), `termin` (Termin eingeordnet), `scrum_master` (Nachfrage-Runde) |
+| `runs` | Protokoll: welcher Agent wann lief, mit Status und Kurzfassung. Einträge: `planner` (Planungslauf), `rueckmeldung` (Antwort mit Änderungen ausgewertet), `freigabe` (Plan abgesegnet), `termin` (Termin eingeordnet), `scrum_master` (Nachfrage-Runde), `abgleich` (Kalenderabgleich, nur wenn sich etwas geändert hat) |
 
 Status einer Aufgabe: `offen`, `in_arbeit`, `erledigt`, `verworfen` (Termin
 entfallen) und `abgelehnt` (von dir herausgenommen). Die
@@ -1044,6 +1095,12 @@ eine Antwort auswertet oder der Status-Agent eine Nachricht-Aufgabe nennt.
   dieselbe. Die Sätze des Modells stimmten inhaltlich, einmal schrieb es
   „Naechste" ohne Umlaut. Modellvergleich mit Qwen: Abschnitt
   [Modell je Agent](#modell-je-agent).
+- Kalenderabgleich gegen den echten Kalender und eine Kopie der echten
+  Datenbank (2026-11-16): erkannte einen von Mittwoch auf den folgenden Montag
+  verschobenen Termin (Vorbereitung blieb, die Nachricht zum Verschieben wurde
+  verworfen) und einen abgesagten (beide Aufgaben verworfen); ein zweiter Lauf
+  änderte nichts. Verschobene Vorkommen von Serien und verlegte Serien sind
+  nur in den automatischen Tests nachgestellt.
 - Noch offen: Agenten, die Aufgaben selbst erledigen; vom Nutzer ergänzte
   Aufgaben (`manuell`) erscheinen in `tasks` und beim Status-Agenten, aber
   nicht in der Planliste und der Kurzfassung des Planungs-Agenten.

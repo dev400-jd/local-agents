@@ -28,7 +28,7 @@ import sys
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 
@@ -61,6 +61,15 @@ DEFAULT_QUESTION = "Plane meine naechste Woche."
 
 
 @dataclass(frozen=True)
+class Move:
+    """Ein Termin, der seit dem letzten Abgleich verschoben wurde."""
+
+    title: str
+    old_start: datetime
+    new_start: datetime
+
+
+@dataclass(frozen=True)
 class Plan:
     """Ergebnis eines Planungslaufs fuer einen Zeitraum."""
 
@@ -69,6 +78,66 @@ class Plan:
     counts: Counter  # NEW, CHANGED, UNCHANGED -> Anzahl Aufgaben
     discarded: int  # verworfene Aufgaben zu entfallenen Terminen
     tasks: list[Task]  # alle nicht verworfenen Aufgaben zu Terminen des Zeitraums
+    moves: tuple[Move, ...] = ()
+
+
+def event_key(event: Event) -> str:
+    """Kennung eines Termins in der Datenbank: Kalender-Kennung und urspruenglicher Beginn."""
+    return f"{event.uid or event.title}|{(event.occurrence or event.start).isoformat()}"
+
+
+def match_moves(
+    gone: list[StoredEvent], fresh: list[tuple[str, Event]], start: date, end: date
+) -> dict[str, str]:
+    """Ordnet verschwundene Termine neu aufgetauchten zu: alte Kennung -> neue.
+
+    Ein verschobener Termin taucht im Kalender unter anderer Kennung auf. Drei
+    Faelle gelten als derselbe Termin:
+
+    - Ein Vorkommen einer Serie wurde einzeln verschoben: Der neue Eintrag ist
+      ein geaendertes Vorkommen mit dem alten Beginn als Ursprung und gleichem Titel.
+    - Ein Einzeltermin wurde verschoben: gleiche Kalender-Kennung, je genau einer.
+    - Eine ganze Serie wurde verlegt: gleiche Kennung und im Zeitraum gleich
+      viele alte wie neue Vorkommen, in zeitlicher Reihenfolge.
+
+    Alles andere bleibt "entfallen" und "neu".
+    """
+    renames: dict[str, str] = {}
+    fresh = list(fresh)
+
+    def pair(old: StoredEvent, new: tuple[str, Event]) -> None:
+        renames[old.id] = new[0]
+        fresh.remove(new)
+
+    for old in gone:
+        _, _, origin = old.id.rpartition("|")
+        hits = [
+            new
+            for new in fresh
+            if new[1].detached
+            and new[1].occurrence is not None
+            and new[1].occurrence.isoformat() == origin
+            and new[1].title.strip().casefold() == old.title.casefold()
+        ]
+        if len(hits) == 1:
+            pair(old, hits[0])
+    by_uid: dict[str, list[StoredEvent]] = {}
+    for old in gone:
+        if old.id not in renames:
+            by_uid.setdefault(old.id.rpartition("|")[0], []).append(old)
+    for uid, olds in by_uid.items():
+        same = [new for new in fresh if (new[1].uid or new[1].title) == uid]
+        single = [new for new in same if not new[1].recurring]
+        inside = sorted(
+            (new for new in same if start <= new[1].start.date() <= end),
+            key=lambda new: new[1].start,
+        )
+        if len(olds) == 1 and len(single) == 1 and len(same) == 1:
+            pair(olds[0], single[0])
+        elif len(olds) == len(inside):
+            for old, new in zip(sorted(olds, key=lambda e: e.start), inside):
+                pair(old, new)
+    return renames
 
 
 def plan_events(
@@ -78,31 +147,59 @@ def plan_events(
     start: date,
     end: date,
     today: date | None = None,
+    now: datetime | None = None,
+    plannable: Callable[[date], bool] | None = None,
 ) -> Plan:
     """Schreibt Termine und ihre Aufgaben in die Datenbank.
 
     ``today`` ist das frueheste Fertig-bis-Datum der Verschiebe-Aufgaben.
+    ``events`` darf ueber ``start`` bis ``end`` hinausreichen (Kalenderabgleich):
+    Ausserhalb zaehlen nur Termine, die die Datenbank schon kennt, etwa weil
+    sie dorthin verschoben wurden. Neue Termine bekommen Aufgaben nur an Tagen,
+    fuer die ``plannable`` gilt (Standard: der Zeitraum), und mit ``now`` nur,
+    wenn sie noch nicht begonnen haben.
     """
 
     def context_of(event: Event) -> str:
         return profile.classify(event.title, event.organizer_domain, event.attendee_domains)
 
+    if plannable is None:
+        plannable = lambda day: start <= day <= end  # noqa: E731
     # Warum ein Termin weichen sollte, je (Beginn, Ende, Titel).
     move_reasons = {
         (meeting.start, meeting.end, meeting.title): group.reason
         for group in move_groups(events, profile, context_of)
         for meeting in group.meetings
     }
-    counts: Counter = Counter()
-    discarded = 0
-    kept: set[str] = set()
+    candidates: list[tuple[str, Event]] = []
     seen: set[tuple] = set()
     for event in sorted(events, key=lambda e: (e.start, e.title)):
         duplicate = (event.start, event.end, event.title)
         if not needs_task(event, profile) or duplicate in seen:
             continue
         seen.add(duplicate)
-        event_id = f"{event.uid or event.title}|{event.start.isoformat()}"
+        candidates.append((event_key(event), event))
+
+    stored = {event.id: event for event in store.events(date.min, date.max)}
+    fetched = {event_id for event_id, _ in candidates}
+    gone = [event for event in store.events(start, end) if event.id not in fetched]
+    fresh = [item for item in candidates if item[0] not in stored]
+    for old_id, new_id in match_moves(gone, fresh, start, end).items():
+        store.rekey_event(old_id, new_id)
+        stored[new_id] = stored.pop(old_id)
+    existing = {(task.event_id, task.kind): task for task in store.tasks()}
+
+    counts: Counter = Counter()
+    discarded = 0
+    kept: set[str] = set()
+    moves: list[Move] = []
+    for event_id, event in candidates:
+        day = event.start.date()
+        before = stored.get(event_id)
+        if before is None and (not plannable(day) or (now is not None and event.start <= now)):
+            continue
+        if before is not None and before.start != event.start:
+            moves.append(Move(event.title.strip(), before.start, event.start))
         context = context_of(event)
         store.upsert_event(
             StoredEvent(
@@ -116,15 +213,18 @@ def plan_events(
                 event.organizer,
             )
         )
-        day = event.start.date()
         what = f"{event.title.strip()} ({WEEKDAYS[day.weekday()]} {event.start:%d.%m. %H:%M})"
         due = day - timedelta(days=profile.lead_days)
         counts[store.upsert_task(event_id, PREPARATION, f"Vorbereitung: {what}", context, due, AGENT_NAME)] += 1
-        reason = move_reasons.get(duplicate)
+        reason = move_reasons.get((event.start, event.end, event.title))
         if reason:
-            due = day - timedelta(days=profile.move_lead_days)
-            if today:
-                due = max(due, min(today, day))
+            ideal = day - timedelta(days=profile.move_lead_days)
+            due = max(ideal, min(today, day)) if today else ideal
+            # Eine schon angelegte Aufgabe rueckt nicht mit jedem Tag weiter,
+            # sonst waere sie nie ueberfaellig.
+            old = existing.get((event_id, MOVE))
+            if old is not None and ideal <= old.due_date <= due:
+                due = old.due_date
             title = move_title(event, what, reason)
             counts[store.upsert_task(event_id, MOVE, title, context, due, AGENT_NAME)] += 1
         else:
@@ -137,7 +237,7 @@ def plan_events(
         for task in store.tasks()
         if task.event_id in kept and task.status not in (DISCARDED, REJECTED)
     ]
-    return Plan(start, end, counts, discarded, tasks)
+    return Plan(start, end, counts, discarded, tasks, tuple(moves))
 
 
 def move_title(event: Event, what: str, reason: str) -> str:
@@ -231,6 +331,7 @@ def plan_week(ctx: RunContext[PlannerDeps], start: date, end: date) -> str:
 
 def _plan(deps: PlannerDeps, start: date, end: date) -> str:
     plan = plan_events(deps.fetch(start, end), deps.profile, deps.store, start, end, deps.today)
+    deps.store.mark_planned(start, end)
     deps.plans.append(plan)
     heading = f"Aufgaben für {start:%d.%m.}–{end:%d.%m.%Y} ({plan_summary(plan)})"
     deps.notes[heading] = plan_lines(plan, deps.profile) or ["- keine Aufgaben"]

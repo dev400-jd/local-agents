@@ -39,6 +39,13 @@ class Event:
     organizer_is_me: bool = False
     # Kennung des Termins im Kalender; Serientermine teilen sie sich.
     uid: str = ""
+    # Urspruenglicher Beginn: Bei einem einzeln verschobenen Vorkommen einer
+    # Serie bleibt er stehen, daran ist der Termin wiederzuerkennen.
+    occurrence: datetime | None = None
+    # Vorkommen einer Serie bzw. einzeln geaendertes Vorkommen. Ein geaendertes
+    # Vorkommen fuehrt im Kalender eine eigene Kennung, nicht die der Serie.
+    recurring: bool = False
+    detached: bool = False
 
 
 def next_week(today: date) -> tuple[date, date]:
@@ -108,6 +115,9 @@ def fetch_events(start: date, end: date) -> list[Event]:
             location=str(item.location() or ""),
             calendar=str(item.calendar().title() or ""),
             uid=str(item.calendarItemExternalIdentifier() or item.eventIdentifier() or ""),
+            occurrence=local(item.occurrenceDate()) if item.occurrenceDate() is not None else None,
+            recurring=bool(item.hasRecurrenceRules()),
+            detached=bool(item.isDetached()),
             organizer_domain=_domain(item.organizer()),
             organizer=_name(item.organizer()),
             organizer_is_me=bool(item.organizer() is not None and item.organizer().isCurrentUser()),

@@ -9,7 +9,9 @@ Aufruf:
 """
 
 import sys
+from datetime import datetime
 
+from local_agents import sync
 from local_agents.holidays import WEEKDAYS
 from local_agents.profile import Profile, ProfileError, load_profile
 from local_agents.store import DONE, IN_PROGRESS, OPEN, REJECTED, Store, Task
@@ -44,7 +46,11 @@ def main(argv: list[str], store: Store | None = None, profile: Profile | None = 
     except ProfileError as exc:
         print(exc, file=sys.stderr)
         return 1
-    store = Store() if store is None else store
+    if store is None:
+        store = Store()
+        if not args or args == ["alle"]:
+            # Nur im echten Aufruf; Tests reichen ihre eigene Datenbank herein.
+            sync.refresh(store, profile, datetime.now())
     if not args or args == ["alle"]:
         statuses = None if args else (OPEN, IN_PROGRESS)
         print(format_tasks(store.tasks(statuses), profile))

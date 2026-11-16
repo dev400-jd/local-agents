@@ -162,8 +162,16 @@ class TestMoveTasks(unittest.TestCase):
         event = internal(18, "10:00", "Jour fixe")
         plan = self.plan([event], dataclasses.replace(ONSITE, move_lead_days=5))
         self.assertEqual(self.moves(plan)[0].due_date, date(2026, 11, 13))
-        plan = self.plan([event], dataclasses.replace(ONSITE, move_lead_days=5), today=date(2026, 11, 15))
+        late = internal(18, "14:00", "Abstimmung")
+        plan = self.plan([late], dataclasses.replace(ONSITE, move_lead_days=5), today=date(2026, 11, 15))
         self.assertEqual(self.moves(plan)[0].due_date, date(2026, 11, 15))
+
+    def test_existing_move_task_does_not_follow_today(self) -> None:
+        event = internal(18, "10:00", "Jour fixe")
+        self.plan([event], today=date(2026, 11, 15))
+        plan = self.plan([event], today=date(2026, 11, 17))
+        self.assertEqual(self.moves(plan)[0].due_date, date(2026, 11, 15))
+        self.assertEqual(plan.counts[CHANGED], 0)
 
     def test_own_meeting_unknown_organizer_and_large_round(self) -> None:
         many = tuple(["beispiel.de"] * 12)
