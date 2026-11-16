@@ -113,19 +113,17 @@ class TestFeedbackGrader(unittest.TestCase):
 
     def test_differences_are_named(self) -> None:
         case = feedback_case(
-            eingabe="Daily raus, dafür bis Dienstag die Demo",
+            eingabe="Daily oder Jour fixe raus, dafür bis Dienstag die Demo",
             raus=[1],
             neu=[{"titel_enthaelt": "Demo", "faellig": date(2026, 11, 24)}],
             unklar=False,
         )
-        model = answering(
-            {"remove": [2], "add": [{"title": "Demo aufsetzen", "due": "2026-11-25"}], "unclear": "Dings"}
-        )
+        model = answering({"remove": [2], "add": [{"title": "Demo aufsetzen"}], "unclear": "Dings"})
         self.assertEqual(
             evals.run_feedback(case, model),
             [
                 "raus erwartet [1], herausgenommen [2]",
-                "„Demo“: fällig 2026-11-24 erwartet, 2026-11-25 angelegt",
+                "„Demo“: fällig 2026-11-24 erwartet, 2026-11-20 angelegt",
                 "unnötige Rückfrage",
             ],
         )

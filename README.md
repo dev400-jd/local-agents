@@ -353,9 +353,16 @@ Alles klar, ich habe eine Aufgabe herausgenommen und eine Aufgabe ergänzt.
 - Alles andere übersetzt das lokale Modell in Änderungen: welche Aufgaben raus
   sollen und welche dazukommen, mit Datum, wenn du eines nennst („bis
   Dienstag", „morgen"); ohne Datum ist die neue Aufgabe heute fällig.
+- Das Fertig-bis-Datum rechnet der Code aus deinen Worten aus, nicht das
+  Modell, weil es sich bei Wochentagen verrechnet. Erkannt werden „heute",
+  „morgen", Wochentage, „20.11.", „am 20." und „bis zum 20.".
 - Der Code führt nur aus, was zu einer vorhandenen Aufgabe passt, und nennt
   jede Änderung einzeln, damit ein Missverständnis auffällt. Was das Modell
   nicht zuordnen kann, steht unter „nicht verstanden" und ändert nichts.
+- Eine Aufgabe wird nur herausgenommen, wenn deine Antwort sie erkennbar
+  nennt: über ihre Nummer, ihren Tag, ein Wort aus dem Titel oder „alle".
+  Rät das Modell bei einer unklaren Antwort, bleibt die Aufgabe stehen und
+  der Agent fragt nach („Meinst du #6 …?").
 - Herausgenommene Aufgaben bekommen den Status `abgelehnt`; der Planungs-Agent
   legt sie beim nächsten Lauf nicht wieder an. Das gilt für diesen einen
   Termin, nicht für die ganze Serie; dauerhaft ausnehmen geht mit `skip` im
@@ -1116,7 +1123,7 @@ Ergebnis ist eine Quote.
 ```bash
 .venv/bin/python -m local_agents.evals                    # alle Agenten mit Fällen
 .venv/bin/python -m local_agents.evals scrum_master       # nur dieser Agent
-.venv/bin/python -m local_agents.evals --laeufe 5         # jeden Fall fünfmal (Standard 3)
+.venv/bin/python -m local_agents.evals --laeufe 5         # jeden Fall fünfmal (Standard 3), zeigt Schwankungen besser
 .venv/bin/python -m local_agents.evals --modell qwen3.5:9b-q8_0
 .venv/bin/python -m local_agents.evals --fall Daily       # nur Fälle mit "Daily" im Namen
 .venv/bin/python -m local_agents.evals --liste            # Fälle zeigen, nichts ausführen
@@ -1278,6 +1285,20 @@ Termin-Agent und Story-Erkennung gibt es noch keine Fälle.
     heute, einmal eine Woche zu spät), und eine unklare Antwort („das mit dem
     Dings passt mir nicht") führte in allen drei Läufen dazu, dass eine
     Aufgabe herausgenommen wurde, statt nachzufragen.
+- Zweite Messung nach der Korrektur der Rückmeldung, je fünf Läufe
+  (2026-11-16, `gpt-oss:20b`):
+  - Rückmeldung auf den Plan: 57 von 60 Läufen. Das Fertig-bis-Datum rechnet
+    jetzt der Code aus den Worten des Nutzers, und eine Aufgabe fliegt nur
+    raus, wenn die Antwort sie erkennbar nennt. Die unklare Antwort führte in
+    5 von 5 Läufen zur Rückfrage (vorher 0 von 3). Je ein Lauf scheiterte
+    noch bei „bis Dienstag" (keine Aufgabe angelegt), bei „raus, dafür bis zum
+    25." (heute statt 25.) und bei „beide Aufgaben zur Teamrunde" (nur eine
+    herausgenommen).
+  - Scrum Master, unverändert: 73 von 80 Läufen. Mit fünf Läufen zeigen sich
+    Schwankungen, die drei Läufe verdeckt hatten: Die Bitte „schreib bitte
+    rein, dass" blieb in 4 von 5 Läufen im Text, die Zuordnung über ein
+    Stichwort aus dem Namen gelang in 3 von 5, der Satz mit zwei Stories in
+    4 von 5. Noch nicht behoben.
 - Noch offen: Agenten, die Aufgaben selbst erledigen; vom Nutzer ergänzte
   Aufgaben (`manuell`) erscheinen in `tasks` und beim Status-Agenten, aber
   nicht in der Planliste und der Kurzfassung des Planungs-Agenten.

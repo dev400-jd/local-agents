@@ -7,7 +7,7 @@ from pydantic_ai import models
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from local_agents.feedback import Feedback, NewTask, apply, handle, is_approval
+from local_agents.feedback import is_named, resolve_due, Feedback, NewTask, apply, handle, is_approval
 from local_agents.profile import Context, Profile
 from local_agents.store import OPEN, REJECTED, Store, StoredEvent
 from datetime import datetime
@@ -102,6 +102,56 @@ class TestFeedback(unittest.TestCase):
             ],
         )
         self.assertEqual(self.statuses(), {1: OPEN, 2: OPEN})
+
+    def test_guessed_removal_is_not_carried_out_but_asked_back(self) -> None:
+        model = answering({"remove": [2]})
+        self.assertEqual(
+            self.handle("das mit dem Dings am Nachmittag passt mir nicht", model),
+            [
+                "- nicht verstanden: Meinst du #2 Nachricht an Erika Muster: Daily verschieben? "
+                "Das habe ich nicht herausgenommen; nenne die Nummer oder den Termin.",
+                "Ich habe nichts geändert. Einen Teil habe ich nicht verstanden, er steht im Terminal.",
+            ],
+        )
+        self.assertEqual(self.statuses(), {1: OPEN, 2: OPEN})
+
+    def test_task_counts_as_named_by_number_day_word_or_all(self) -> None:
+        task = self.store.tasks()[1]  # #2 Nachricht an Erika Muster: Daily verschieben, fällig So 15.11.
+        for answer in (
+            "nimm Aufgabe 2 raus",
+            "die 2 brauche ich nicht",
+            "die Nachrichten bitte nicht",
+            "das Daily raus",
+            "alles für heute raus",
+            "alle raus",
+        ):
+            self.assertTrue(is_named(task, answer, TODAY), answer)
+        for answer in (
+            "das mit dem Dings passt nicht",
+            "bis zum 2. die Folien",
+            "um 12:00 passt es nicht",
+            "das am Donnerstag raus",
+        ):
+            self.assertFalse(is_named(task, answer, TODAY), answer)
+
+    def test_due_date_comes_from_the_users_words_not_the_models_arithmetic(self) -> None:
+        def due(answer: str, removing: bool = False, **new) -> date | None:
+            return resolve_due(NewTask(title="Folien", **new), answer, TODAY, removing)
+
+        tuesday = date(2026, 11, 17)
+        # Das Modell verrechnet sich oder laesst das Datum weg: die Worte gelten.
+        self.assertEqual(due("bis Dienstag die Folien", when="bis Dienstag", due=date(2026, 11, 24)), tuesday)
+        self.assertEqual(due("bis Dienstag die Folien", when="bis Dienstag"), tuesday)
+        self.assertEqual(due("bis Dienstag die Folien"), tuesday)
+        self.assertEqual(due("bis zum 25. die Folien", when="bis zum 25."), date(2026, 11, 25))
+        # Kein Tag genannt: ein erfundenes Datum zaehlt nicht.
+        self.assertIsNone(due("noch die Folien", due=date(2026, 11, 20)))
+        # Der einzige Tag gehoert zur herausgenommenen Aufgabe, nicht zur neuen.
+        self.assertIsNone(due("das Daily am Montag raus, dazu Folien", removing=True))
+        # Zwei Tage: das Datum des Modells gilt, wenn die Antwort es nennt.
+        both = "das Daily am Montag raus, dazu bis Dienstag Folien"
+        self.assertEqual(due(both, removing=True, due=tuesday), tuesday)
+        self.assertEqual(due(both, removing=True, when="bis Dienstag", due=date(2026, 11, 16)), tuesday)
 
     def test_new_task_without_or_with_past_date_is_due_today(self) -> None:
         feedback = Feedback(add=[NewTask(title="A"), NewTask(title="B", due=date(2026, 11, 1)), NewTask(title=" ")])

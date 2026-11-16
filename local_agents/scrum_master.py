@@ -39,6 +39,7 @@ from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
 from local_agents.agent import MODEL_SETTINGS, ollama_model
+from local_agents.dates import mentioned_dates
 from local_agents.holidays import WEEKDAYS, is_public_holiday
 from local_agents.meeting_types import keyword_hint
 from local_agents.profile import Profile, ProfileError, load_profile
@@ -50,7 +51,6 @@ QUESTION = "Gibt es etwas Neues zu einer User Story?"
 FOLLOW_UP = "Noch etwas zu einer anderen Story?"
 MAX_ROUNDS = 5
 CALENDAR_DAYS = 14
-DAY_WORDS = ("montag", "dienstag", "mittwoch", "donnerstag", "freitag", "samstag", "sonntag")
 NOTHING = re.compile(
     r"(nein|nee|nö|nichts|nix|nichts neues|keine|kein|danke|das war'?s|das wars|fertig|"
     r"passt|ok|okay|im moment|momentan|gerade|aktuell|mehr|alles|war alles|,|\.|!|\s)*",
@@ -250,40 +250,6 @@ def mentioned_stories(text: str, stories: list[Story]) -> list[int]:
         for index, story in enumerate(stories)
         if story.key and re.search(rf"(?<![\w-]){re.escape(story.key)}(?![\w-])", text, re.IGNORECASE)
     ]
-
-
-def mentioned_dates(text: str, today: date) -> list[date]:
-    """Tage, die der Text nennt: heute, morgen, Wochentage, "20.11." oder "am 20."."""
-    lowered = text.casefold()
-    found = []
-    for word, days in (("übermorgen", 2), ("morgen", 1), ("heute", 0)):
-        if re.search(rf"(?<!\w){word}(?!\w)", lowered):
-            found.append(today + timedelta(days=days))
-            lowered = lowered.replace(word, " ")
-    for number, name in enumerate(DAY_WORDS):
-        if re.search(rf"(?<!\w){name}s?(?!\w)", lowered):
-            # Der naechste solche Tag; der heutige Wochentag meint die kommende Woche.
-            found.append(today + timedelta(days=(number - today.weekday()) % 7 or 7))
-    for match in re.finditer(r"(?<!\d)(\d{1,2})\.(?:\s?(\d{1,2})\.(?:(\d{4}))?)?(?!\d)", lowered):
-        day, month, year = match.group(1), match.group(2), match.group(3)
-        if month is None and not re.search(r"\bam\s*$", lowered[: match.start()]):
-            continue  # eine nackte Zahl mit Punkt ist kein Datum
-        try:
-            candidate = date(int(year or today.year), int(month or today.month), int(day))
-        except ValueError:
-            continue
-        if candidate < today and year is None:
-            # Ohne Jahr ist der naechste solche Tag gemeint.
-            if month is None:
-                next_month = today.replace(day=28) + timedelta(days=4)
-                try:
-                    candidate = date(next_month.year, next_month.month, int(day))
-                except ValueError:
-                    continue
-            else:
-                candidate = candidate.replace(year=today.year + 1)
-        found.append(candidate)
-    return sorted(set(found))
 
 
 def is_nothing(answer: str) -> bool:

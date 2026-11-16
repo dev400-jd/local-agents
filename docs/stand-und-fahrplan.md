@@ -60,9 +60,11 @@ erwarteter Antwort, gegen den jedes Modell und jede Prompt-Änderung läuft.
 Stand 2026-11-16: Das Messprogramm steht (`evals.py`, README-Abschnitt
 „Messen") mit erfundenen Fällen für Scrum Master und Rückmeldung. Die erste
 Messung fand zwei Schwächen der Rückmeldung (Fälligkeit bei Wochentagen,
-unklare Antworten nehmen eine Aufgabe heraus). Als Nächstes:
+unklare Antworten nehmen eine Aufgabe heraus). Beide sind behoben und
+nachgemessen (57 von 60 Läufen statt 30 von 36). Als Nächstes:
 
-- die beiden Schwächen beheben und nachmessen
+- Scrum Master: die Bitte („schreib bitte rein, dass") bleibt oft im Text,
+  die Zuordnung über ein Stichwort aus dem Namen schwankt
 - echte Fälle aus dem Alltag sammeln
 - Fälle für Status-Agent, Termin-Agent und Story-Erkennung
 
