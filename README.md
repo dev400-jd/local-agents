@@ -7,6 +7,8 @@ und Modellerfahrungen stehen im Schwesterprojekt `opencode-ollama-agents`
 
 Was die Agenten heute können, wo ihre Grenzen liegen und woran als Nächstes
 zu arbeiten ist, steht in [docs/stand-und-fahrplan.md](docs/stand-und-fahrplan.md).
+Was die Messung der Agenten ergeben hat, steht in
+[docs/messung-erkenntnisse.md](docs/messung-erkenntnisse.md).
 
 | Baustein | Datei | Zweck |
 |---|---|---|

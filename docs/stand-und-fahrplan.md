@@ -2,7 +2,8 @@
 
 Stand: 2026-11-18. Diese Seite beschreibt, was die Agenten heute können, wo
 ihre Grenzen liegen und woran als Nächstes zu arbeiten ist. Wie die Bausteine
-bedient werden, steht in der [README](../README.md).
+bedient werden, steht in der [README](../README.md). Was die Messung der
+Agenten ergeben hat, steht in [messung-erkenntnisse.md](messung-erkenntnisse.md).
 
 Die Seite ist eine Momentaufnahme. Wer einen Baustein ändert, der hier
 beschrieben ist, zieht die betroffene Zeile nach und setzt das Datum oben neu.
