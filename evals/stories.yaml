@@ -1,0 +1,106 @@
+# yaml-language-server: $schema=stories_schema.json
+# Erfundene Fälle für die Story-Erkennung: Findet das Modell in der Gliederung
+# eines Dokuments die Überschriften, die je eine Story sind? Das Modell wird nur
+# gefragt, wenn eine Datei keine Kürzel wie "QG-1:" hat. Aufbau: README, Abschnitt "Messen".
+name: stories
+cases:
+- name: "Stories auf einer Ebene, ohne Kürzel"
+  inputs:
+    markdown: |
+      # Lagerverwaltung: Anforderungen
+
+      Stand November 2026.
+
+      ## Ziel
+
+      Der Lagerbestand soll täglich stimmen.
+
+      ## Wareneingang buchen
+
+      Als Lagerist möchte ich Lieferungen buchen, damit der Bestand stimmt.
+
+      ### Akzeptanzkriterien
+
+      - Lieferschein wird gescannt.
+
+      ## Inventur vorbereiten
+
+      Als Lagerleitung möchte ich Zähllisten drucken, damit die Inventur schneller geht.
+
+      ### Akzeptanzkriterien
+
+      - Zählliste je Regal.
+
+      ## Fehlbestände melden
+
+      Als Einkauf möchte ich über Fehlbestände informiert werden, damit ich nachbestellen kann.
+
+      ## Offene Punkte
+
+      - Scanner-Modell ist noch nicht entschieden.
+  evaluators:
+  - Stories:
+      erwartet: ["Wareneingang buchen", "Inventur vorbereiten", "Fehlbestände melden"]
+- name: "Stories unter Gruppenüberschriften"
+  inputs:
+    markdown: |
+      # Kundenportal
+
+      ## Überblick
+
+      Das Portal ersetzt die Anfragen per Mail.
+
+      ## Gruppe Anmeldung
+
+      ### Anmeldung mit Firmenkonto
+
+      Als Kunde möchte ich mich mit meinem Firmenkonto anmelden.
+
+      **Aufwand:** 3 PT
+
+      ### Passwort zurücksetzen
+
+      Als Kunde möchte ich mein Passwort selbst zurücksetzen.
+
+      **Aufwand:** 2 PT
+
+      ## Gruppe Rechnungen
+
+      ### Rechnungen herunterladen
+
+      Als Kunde möchte ich meine Rechnungen als PDF herunterladen.
+
+      **Aufwand:** 5 PT
+
+      ## Glossar
+
+      Firmenkonto: Zugang über den Arbeitgeber des Kunden.
+  evaluators:
+  - Stories:
+      erwartet: ["Anmeldung mit Firmenkonto", "Passwort zurücksetzen", "Rechnungen herunterladen"]
+- name: "Dokument ohne Stories"
+  inputs:
+    markdown: |
+      # Protokoll Lenkungsausschuss 12.11.2026
+
+      ## Teilnehmende
+
+      Kim, Alex, Sam
+
+      ## Beschlüsse
+
+      - Das Budget für 2027 ist freigegeben.
+
+      ## Nächste Schritte
+
+      - Kim lädt zum nächsten Termin ein.
+  evaluators:
+  - Stories
+- name: "Beispieldatei mit Kürzeln, dem Modell ohne Kürzel gezeigt"
+  inputs: {datei: "tests/data/feature_beispiel.md", ohne_kuerzel: true}
+  evaluators:
+  - Stories: {wie_regel: true}
+- name: "Beispieldatei mit Gruppen, dem Modell ohne Kürzel gezeigt"
+  inputs: {datei: "tests/data/feature_varianten.md", ohne_kuerzel: true}
+  evaluators:
+  - Stories: {wie_regel: true}

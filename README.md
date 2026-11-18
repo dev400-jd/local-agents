@@ -24,6 +24,8 @@ zu arbeiten ist, steht in [docs/stand-und-fahrplan.md](docs/stand-und-fahrplan.m
 | Kalenderabgleich | `local_agents/sync.py` | bringt die Datenbank vor jedem Lesen auf den Stand des Kalenders |
 | Kalenderwache | `local_agents/watch.py` | Hintergrunddienst: gleicht ab, sobald sich der Kalender ändert |
 | Messung | `local_agents/evals.py` | lässt Agenten gegen feste Fälle mit bekannter richtiger Antwort laufen |
+| Messung je Agent | `local_agents/eval_suites.py` | Eingaben, Ausführung und Prüfer je Agent |
+| Fälle festhalten | `local_agents/eval_capture.py` | legt echte Fälle aus dem Alltag für die Messung ab |
 | Datumsangaben | `local_agents/dates.py` | erkennt „morgen", Wochentage und Daten in deutschem Freitext |
 | Testhilfen | `local_agents/testing.py` | Antworten des geskripteten Modells für beide Ausgabearten |
 | Kurzfassung | `local_agents/briefing.py` | Überblick über die offenen Aufgaben in wenigen Sätzen, zum Vorlesen |
@@ -936,16 +938,31 @@ fünf Läufe:
 
 | | `gpt-oss:20b` | `qwen3.8:27b-mlx` |
 |---|---|---|
-| Scrum Master | 73 bis 79 von 80 Läufen | 80 von 80 |
-| Rückmeldung auf den Plan | 56 bis 57 von 60 Läufen | 60 von 60 |
-| Dauer je Modellaufruf in der Messung | 1 bis 3 s | 5 bis 20 s |
-| Status-Agent, ein Lauf | 3 bis 8 s | 16 s |
+| Scrum Master | 73 bis 79 von 80 Läufen, 1 bis 3 s je Lauf | 80 von 80, 5 bis 20 s |
+| Rückmeldung auf den Plan | 56 bis 57 von 60, 1 bis 3 s | 60 von 60, 6 bis 17 s |
+| Status-Agent | 45 von 45, 1 bis 2 s | 45 von 45, 8 bis 14 s |
+| Terminart (je zwei Läufe) | 24 von 26, 3 bis 18 s | Abbruch nach 10 bestandenen Läufen (rund 50 s je Lauf): Speichermangel |
+| Story-Erkennung | 19 von 25, unter 1 s | 25 von 25, 8 bis 21 s |
 | Status- und Termin-Agent (`orchestrator --neu`), ein Lauf | nicht gemessen | 98 s |
 | Speicher geladen | 12 GB | 21 bis 23 GB |
 
-Qwen bestand auch die Fälle, an denen `gpt-oss:20b` regelmäßig scheitert
-(Bitte im Text, zwei Stories in einem Satz, beide Aufgaben zu einem Termin).
-Der Preis ist die Dauer und der Speicher: Bei 24 GB RAM bleibt neben dem
+Die Zahlen für den Status-Agenten gelten nach der Korrektur seines Auftrags
+(vorher mit Qwen 39 von 45). Bei der Terminart scheiterte `gpt-oss:20b` nur am
+Fall mit irreführendem Stichwort; dessen Erwartung war strenger als nötig und
+ist seitdem gelockert.
+
+Was daraus folgt:
+
+- Scrum Master und Story-Erkennung: Qwen ist klar besser. Es bestand auch die
+  Fälle, an denen `gpt-oss:20b` regelmäßig scheitert (Bitte im Text, zwei
+  Stories in einem Satz); bei der Story-Erkennung hält `gpt-oss:20b` die
+  Abschnitte eines Protokolls für Stories und übersieht eine Story mit
+  unauffälligem Titel.
+- Status-Agent und Terminart: `gpt-oss:20b` ist gleich gut und fünf- bis
+  zehnmal schneller; beim Termin-Agenten kommt Qwen an die Speichergrenze.
+- Rückmeldung auf den Plan: Qwen ist etwas besser (drei Läufe von 60).
+
+Der Preis von Qwen ist die Dauer und der Speicher: Bei 24 GB RAM bleibt neben dem
 Modell kaum Platz. Ein erster Messversuch mit weiteren offenen Programmen
 blieb stecken (55 Aufrufe in 45 Minuten, Auslagerungsspeicher voll); mit
 geschlossenen Programmen lief die Messung in 25 Minuten durch.
@@ -1153,18 +1170,26 @@ ohne Cloud-Dienst. Installation: `.venv/bin/pip install -e '.[evals]'`.
 ```bash
 .venv/bin/python -m local_agents.evals                    # alle Agenten mit Fällen
 .venv/bin/python -m local_agents.evals scrum_master       # nur dieser Agent
+.venv/bin/python -m local_agents.evals status termin      # mehrere Agenten
 .venv/bin/python -m local_agents.evals --laeufe 10        # jeden Fall zehnmal (Standard 5)
 .venv/bin/python -m local_agents.evals --modell qwen3.5:9b-q8_0
 .venv/bin/python -m local_agents.evals --fall Daily       # nur Fälle mit "Daily" im Namen
 .venv/bin/python -m local_agents.evals --liste            # Fälle zeigen, nichts ausführen
 .venv/bin/python -m local_agents.evals --schema           # Schema-Dateien neu schreiben
+.venv/bin/python -m local_agents.evals merke status       # einen echten Fall festhalten, siehe unten
 ```
 
-Ollama muss laufen. Ein Messlauf beider Agenten (28 Fälle, je fünfmal) dauert
-mit `gpt-oss:20b` knapp fünf Minuten; im Terminal zeigt ein Balken den
-Fortschritt. Ein Modellaufruf, der länger als zwei Minuten hängt, zählt als
-gescheiterter Lauf. Das Programm endet mit 1, wenn ein Fall nicht in jedem
-Lauf besteht.
+Ollama muss laufen; im Terminal zeigt ein Balken den Fortschritt. Scrum Master
+und Rückmeldung zusammen (28 Fälle, je fünfmal) dauern mit `gpt-oss:20b` knapp
+fünf Minuten, mit `qwen3.8:27b-mlx` 25 Minuten. Für Status-Agent, Termin-Agent
+und Story-Erkennung gibt es noch keine gemessene Dauer; der Termin-Agent
+denkt länger nach und braucht je Lauf am meisten. Eine volle Messung aller
+Agenten mit einem großen Modell lohnt deshalb je Agent einzeln oder mit
+`--laeufe 2`. Antwortet der Modellserver in einem Lauf nicht (abgestürzt, nicht
+erreichbar, Zeitlimit), meldet das Programm die Messung als unvollständig und
+hält sie nicht fest. Ein Modellaufruf, der länger als zwei Minuten hängt (Termin-Agent:
+fünf), zählt als gescheiterter Lauf. Das Programm endet mit 1, wenn ein Fall
+nicht in jedem Lauf besteht.
 
 ```text
 scrum_master · gpt-oss:20b · Ausgabe tool · 5 Läufe je Fall · Stand 96a63e7
@@ -1188,6 +1213,14 @@ Geprüft wird mit Code am Endzustand, nicht mit einem zweiten Modell:
 |---|---|---|
 | `scrum_master` | `Bemerkungen` | Zahl der Bemerkungen, zugeordnete Story, Daily-Datum, Angaben im Text, zurückgenommene Vermerke |
 | `rueckmeldung` | `Aufgaben` | herausgenommene Aufgaben (genau diese), neue Aufgaben mit Fälligkeit, Rückfrage bei Unklarem |
+| `status` | `Status` | die Sätze des Modells nennen die Aufgabe, die dran ist, und keine andere; keine Zahl, die nicht in der Eingabe steht; kein „du musst" |
+| `termin` | `Terminart` | die erkannte Terminart; das Modell hat selbst geantwortet (kein Rückfall auf den Katalog); Zahl der Ergebnisse |
+| `stories` | `Stories` | welche Überschriften eines Dokuments das Modell als Stories erkennt, ohne Hilfe durch Kürzel |
+
+Nicht gemessen werden die Ergebnisliste des Termin-Agenten (es gibt keine
+eindeutig richtige Antwort; geprüft wird nur ihre Länge), die freien Texte von
+Kalender- und Asana-Agent, der Planungs-Agent (dort entscheidet der Code) und
+die Spracheingabe.
 
 ### Schwankung beachten
 
@@ -1266,12 +1299,72 @@ cases:
       - {titel_enthaelt: "Demo", faellig: 2026-11-25}
 ```
 
+Für die drei weiteren Agenten, je ein Fall:
+
+```yaml
+# status.yaml: Welche Aufgabe dran ist, bestimmt der Code; geprüft werden die Sätze des Modells.
+- name: "Überfällige Aufgabe geht vor"
+  inputs:
+    umgebung:
+      jetzt: 2026-11-16T09:00:00
+      aufgaben:                    # Nummern 1, 2, 3 ... in dieser Reihenfolge
+      - {titel: "Vorbereitung: Jour fixe (Di 17.11. 14:00)", faellig: 2026-11-16, termin: 2026-11-17T14:00:00}
+      - {titel: "Vorbereitung: Kundenworkshop (Mo 16.11. 13:00)", faellig: 2026-11-15, termin: 2026-11-16T13:00:00}
+    # eingabe: "Womit soll ich anfangen?"   (ohne Angabe die Standardfrage)
+  evaluators:
+  - Status:
+      naechste: 2                  # Nummer der Aufgabe, die dran ist; "keine" = nichts steht an
+      nennt: ["Kundenworkshop"]    # muss in der Antwort stehen
+      nennt_nicht: ["Jour fixe"]   # darf nicht in der Antwort stehen
+
+# termin.yaml: ids der Terminarten stehen in local_agents/meeting_types.py
+- name: "Bericht an die Leitung ohne Stichwort"
+  inputs:
+    umgebung: {rolle_intern: "Teamleiter", rolle_kunde: "Solution Architect"}
+    titel: "Quartalsbericht an die Geschäftsführung"
+    beginn: 2026-11-24T14:00:00
+    minuten: 60
+    eingeladene: 9
+    kontext: intern                # intern oder kunde
+  evaluators:
+  - Terminart: {art: [steuerung, praesentation]}   # eine id oder mehrere vertretbare
+
+# stories.yaml: ein Dokument als Text (markdown: |) oder als Datei
+- name: "Datei mit Kürzeln, dem Modell ohne Kürzel gezeigt"
+  inputs: {datei: "tests/data/feature_beispiel.md", ohne_kuerzel: true}
+  evaluators:
+  - Stories: {wie_regel: true}     # erwartet, was die Regel an den Kürzeln erkennt;
+                                   # sonst erwartet: ["Überschrift A", "Überschrift B"]
+```
+
 Angaben, die fehlen, werden nicht geprüft; die Zahl der Bemerkungen, `raus` und
 die Zahl neuer Aufgaben werden immer geprüft. Unbekannte Schlüssel (etwa ein
 Tippfehler wie `dayli`) sind ein Fehler beim Laden. Die Schema-Dateien
 `evals/*_schema.json` lassen den Editor die Falldateien prüfen; nach einer
 Änderung an Eingaben oder Prüfern schreibt `--schema` sie neu (ein Test
 erinnert daran).
+
+### Echte Fälle festhalten
+
+Die Fälle im Repo sind erfunden. Aussagekräftig wird die Messung mit Fällen
+aus dem Alltag, vor allem mit solchen, bei denen ein Agent danebenlag. `merke`
+legt einen solchen Fall im privaten Ordner ab, in `<agent>-alltag.yaml`:
+
+```bash
+.venv/bin/python -m local_agents.evals merke scrum_master              # die letzte Antwort an den Scrum Master
+.venv/bin/python -m local_agents.evals merke scrum_master "Wortlaut"   # eine bestimmte Antwort
+.venv/bin/python -m local_agents.evals merke rueckmeldung "Wortlaut"   # eine Antwort auf den Plan, mit den jetzt offenen Aufgaben
+.venv/bin/python -m local_agents.evals merke status                    # die jetzt offenen Aufgaben zur jetzigen Uhrzeit
+.venv/bin/python -m local_agents.evals merke termin 12                 # der Termin hinter Aufgabe #12
+.venv/bin/python -m local_agents.evals merke stories ~/pfad/feature.md # eine Datei mit Stories
+```
+
+Als Erwartung steht im Fall zunächst, was der Agent tatsächlich getan hat
+(vermerkte Bemerkungen, erkannte Terminart). War das falsch, trägst du in der
+Datei ein, was richtig gewesen wäre; erst dann misst der Fall etwas. Bei
+`rueckmeldung` und `status` ist die Erwartung leer bzw. nur die Aufgabennummer
+und wird von Hand ergänzt (`raus`, `neu`, `nennt`). Die Dateien enthalten
+Termintitel und Story-Inhalte und bleiben außerhalb des Repos.
 
 ### Ergebnisse und Vergleich
 
@@ -1299,8 +1392,9 @@ hinausgeht (Zahlen unter „Stand"). Zum Nachmessen:
 `LOCAL_AGENTS_OUTPUT=native .venv/bin/python -m local_agents.evals`.
 
 Grenzen: Mit einem guten Dutzend Fällen je Agent zeigt die Messung Rückschritte
-und grobe Unterschiede zwischen Modellen, keine feinen. Für Status-Agent,
-Termin-Agent und Story-Erkennung gibt es noch keine Fälle.
+und grobe Unterschiede zwischen Modellen, keine feinen. Die Fälle für
+Terminarten ohne Stichwort im Titel sind noch nicht gegen ein echtes Modell
+gelaufen (Abbruch durch Speichermangel).
 
 ## Stand
 
@@ -1387,6 +1481,21 @@ Termin-Agent und Story-Erkennung gibt es noch keine Fälle.
   („schreib bitte rein, dass") oft im Text und teilt einen Satz zu zwei
   Stories nicht immer auf; die Rückmeldung nimmt bei „beide Aufgaben zur
   Teamrunde" öfter nur eine heraus.
+- Messung von Status-Agent, Terminart und Story-Erkennung mit beiden Modellen
+  (2026-11-18, vom Nutzer ausgeführt); Zahlen im Abschnitt
+  [Modell je Agent](#modell-je-agent). Was die Messung gefunden hat:
+  - Status-Agent: Qwen rechnete die Zeit bis zum Termin selbst um und lag
+    daneben („knapp 24 Stunden" bei 25) und leitete aus „Plan noch nicht
+    abgesegnet" eine Behauptung ab. Seit der Auftrag Zeitangaben wörtlich
+    verlangt und die Freigabe nicht mehr enthält: 45 von 45 statt 39 von 45.
+  - Terminart mit Qwen: nach zehn bestandenen Läufen stürzte der Modellserver
+    mit „Insufficient Memory" ab. Solche Messungen hält das Programm nicht
+    mehr fest.
+  - Story-Erkennung mit `gpt-oss:20b`: 19 von 25; die Abschnitte eines
+    Protokolls gelten in 3 von 5 Läufen als Stories. Ohne Folgen, solange die
+    Story-Dateien Kürzel haben, denn dann entscheidet die Regel.
+- Der Befehl `merke` (2026-11-18): mit geskriptetem Modell getestet und gegen
+  eine Kopie der echten Datenbank ausgeführt.
 - Noch offen: Agenten, die Aufgaben selbst erledigen; vom Nutzer ergänzte
   Aufgaben (`manuell`) erscheinen in `tasks` und beim Status-Agenten, aber
   nicht in der Planliste und der Kurzfassung des Planungs-Agenten.

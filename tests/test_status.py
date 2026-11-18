@@ -109,7 +109,9 @@ class TestStatusAgent(StatusCase):
             "Als Nächstes: #2 Vorbereitung: Daily [Kunde ACME; überfällig; fertig bis So 15.11.; Termin in 30 Min]\n"
             "Danach noch 3 weitere Aufgaben: 1 heute fällig, 1 morgen fällig, 1 später fällig.",
         )
-        self.assertIn("Stand Mo 16.11.2026, 08:30 Uhr", seen[0])
+        self.assertIn("Stand Mo 16.11.2026, 08:30 Uhr\n", seen[0])
+        self.assertNotIn("abgesegnet", seen[0])  # die Freigabe geht nur an den Nutzer
+        self.assertIn("rechne sie nicht in Stunden oder Minuten um", seen[0])
         self.assertIn("Naechste Aufgabe: #2 Vorbereitung: Daily", seen[0])
         self.assertNotIn("Jour fixe", seen[0])
 

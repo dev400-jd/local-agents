@@ -1,0 +1,594 @@
+"""Was je Agent gemessen wird: Eingaben, Ausfuehrung und Pruefer.
+
+Je Agent gehoeren dazu:
+
+- die Eingaben eines Falls (``...Inputs``, mit der Umgebung, in der er spielt),
+- die Aufgabe, die den Agenten gegen eine frische Datenbank ausfuehrt und den
+  Endzustand zurueckgibt (``..._task``),
+- der Pruefer, der den Endzustand mit der Erwartung aus der Falldatei
+  vergleicht (ein ``Evaluator`` von pydantic-evals).
+
+Das Messprogramm selbst (Faelle laden, wiederholen, berichten) steht in ``evals.py``.
+"""
+
+import dataclasses
+import json
+import re
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
+from pathlib import Path
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict
+from pydantic_ai import capture_run_messages
+from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+from pydantic_evals import Dataset
+from pydantic_evals.evaluators import EvaluationReason, Evaluator, EvaluatorContext
+
+from local_agents import feedback, meeting_agent, scrum_master, status_agent, stories
+from local_agents.meeting_types import BY_ID
+from local_agents.profile import CUSTOMER, INTERNAL, Context, Profile
+from local_agents.store import IN_PROGRESS, NOTE_OPEN, NOTE_REMOVED, OPEN, REJECTED, Store, StoredEvent
+from local_agents.stories import STORY_HEADING, Story, load_features
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+MAX_SAID_CHARS = 300
+# Ein haengender Modellaufruf zaehlt nach so vielen Sekunden als gescheiterter
+# Lauf, statt die ganze Messung aufzuhalten.
+TASK_TIMEOUT = 120.0
+
+
+class Strict(BaseModel):
+    """Unbekannte Schluessel sind ein Fehler, damit Tippfehler in Falldateien auffallen."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+def model_said(messages: list) -> str:
+    """Die letzte Antwort des Modells in einer Zeile: Text oder Argumente des Werkzeugaufrufs."""
+    for message in reversed(messages):
+        if isinstance(message, ModelResponse):
+            parts = []
+            for part in message.parts:
+                if isinstance(part, TextPart):
+                    parts.append(part.content)
+                elif isinstance(part, ToolCallPart):
+                    parts.append(part.args if isinstance(part.args, str) else json.dumps(part.args, ensure_ascii=False))
+            text = " ".join(" ".join(parts).split())
+            return text[:MAX_SAID_CHARS] + ("…" if len(text) > MAX_SAID_CHARS else "")
+    return ""
+
+
+def _known_keys(items: list[dict], allowed: set[str], where: str) -> None:
+    for item in items:
+        unknown = sorted(set(item) - allowed)
+        if unknown:
+            raise ValueError(f"{where}: unbekannte Schluessel {unknown}. Erlaubt: {sorted(allowed)}.")
+
+
+# --- Scrum Master
+
+
+class StoryItem(Strict):
+    kuerzel: str = ""
+    titel: str
+    feature: str = ""
+
+
+class ScrumSetup(Strict):
+    """Was der Scrum Master im Fall kennt: das Datum und die Stories."""
+
+    heute: date
+    stories: list[StoryItem] = []
+    stories_dir: str = ""  # statt stories: ein Ordner mit Markdown-Dateien
+
+
+class ScrumInputs(Strict):
+    umgebung: ScrumSetup
+    eingabe: str
+    vorher: list[str] = []  # fruehere Antworten derselben Runde, ungeprueft
+
+
+class NoteOut(BaseModel):
+    story: str  # Kuerzel, sonst Name; leer = keiner Story zugeordnet
+    daily: date | None
+    text: str
+
+
+class ScrumOutput(BaseModel):
+    """Endzustand nach der Eingabe."""
+
+    bemerkungen: list[NoteOut] = []
+    entfernt: int = 0
+    modell: str = ""  # letzte Antwort des Modells, woertlich
+
+
+def _key(story_name: str) -> str:
+    """Kuerzel einer gespeicherten Story, sonst ihr Name."""
+    match = STORY_HEADING.match(story_name)
+    return match.group(1) if match else story_name
+
+
+def scrum_task(model) -> Callable[[ScrumInputs], ScrumOutput]:
+    def run(inputs: ScrumInputs) -> ScrumOutput:
+        setup = inputs.umgebung
+        if setup.stories_dir:
+            folder = Path(setup.stories_dir).expanduser()
+            stories = [("", story) for feature in load_features(folder) for story in feature.stories]
+        else:
+            stories = [("", Story(item.kuerzel, item.titel, item.feature)) for item in setup.stories]
+        today = setup.heute
+        store = Store(":memory:")
+        try:
+            agent = scrum_master.ScrumMaster(
+                store, Profile(), model, datetime(today.year, today.month, today.day, 9, 0), stories
+            )
+            for earlier in inputs.vorher:
+                agent.respond(earlier, "messung")
+            before = {note.id for note in store.story_notes()}
+            with capture_run_messages() as messages:
+                agent.respond(inputs.eingabe, "messung")
+            new = [note for note in store.story_notes((NOTE_OPEN,)) if note.id not in before]
+            return ScrumOutput(
+                bemerkungen=[NoteOut(story=_key(n.story), daily=n.daily_date, text=n.text) for n in new],
+                entfernt=len(store.story_notes((NOTE_REMOVED,))),
+                modell=model_said(messages),
+            )
+        finally:
+            store.close()
+
+    return run
+
+
+@dataclass
+class Bemerkungen(Evaluator[ScrumInputs, ScrumOutput, Any]):
+    """Prueft die neu vermerkten Bemerkungen und die Zahl der zurueckgenommenen.
+
+    Je erwarteter Bemerkung: ``story`` (Kuerzel; "" = keiner zugeordnet),
+    ``daily`` (Datum oder false = ohne Daily-Bezug; fehlt = nicht geprueft),
+    ``enthaelt`` und ``enthaelt_nicht`` (Textstuecke).
+    """
+
+    erwartet: list[dict] = field(default_factory=list)
+    entfernt: int = 0
+
+    def __post_init__(self) -> None:
+        _known_keys(self.erwartet, {"story", "daily", "enthaelt", "enthaelt_nicht"}, "Bemerkungen.erwartet")
+
+    def evaluate(self, ctx: EvaluatorContext[ScrumInputs, ScrumOutput, Any]) -> EvaluationReason:
+        problems = []
+        new = list(ctx.output.bemerkungen)
+        if len(new) != len(self.erwartet):
+            problems.append(f"{len(self.erwartet)} Bemerkungen erwartet, {len(new)} vermerkt")
+        if ctx.output.entfernt != self.entfernt:
+            problems.append(f"{self.entfernt} entfernt erwartet, {ctx.output.entfernt} entfernt")
+        for want in self.erwartet:
+            story = want.get("story", "")
+            note = next((n for n in new if n.story.casefold() == story.casefold()), None)
+            label = story or "ohne Story"
+            if note is None:
+                got = ", ".join(n.story or "ohne Story" for n in new) or "nichts"
+                problems.append(f"Bemerkung zu {label} fehlt (übrig: {got})")
+                continue
+            new.remove(note)
+            if "daily" in want:
+                daily = want["daily"] or None
+                if note.daily != daily:
+                    problems.append(f"{label}: Daily {daily or 'keins'} erwartet, {note.daily or 'keins'} vermerkt")
+            text = note.text.casefold()
+            for part in want.get("enthaelt", []):
+                if part.casefold() not in text:
+                    problems.append(f"{label}: „{part}“ fehlt im Text")
+            for part in want.get("enthaelt_nicht", []):
+                if part.casefold() in text:
+                    problems.append(f"{label}: „{part}“ gehört nicht in den Text")
+        return EvaluationReason(value=not problems, reason="; ".join(problems))
+
+
+# --- Rueckmeldung auf den Plan
+
+
+class TaskItem(Strict):
+    titel: str
+    faellig: date
+
+
+class FeedbackSetup(Strict):
+    """Der Plan im Fall: Die Aufgaben bekommen die Nummern 1, 2, 3 ... in dieser Reihenfolge."""
+
+    heute: date
+    aufgaben: list[TaskItem] = []
+
+
+class FeedbackInputs(Strict):
+    umgebung: FeedbackSetup
+    eingabe: str
+
+
+class NewTaskOut(BaseModel):
+    titel: str
+    faellig: date
+
+
+class FeedbackOutput(BaseModel):
+    """Endzustand nach der Eingabe."""
+
+    raus: list[int] = []
+    neu: list[NewTaskOut] = []
+    unklar: bool = False
+    modell: str = ""
+
+
+def feedback_task(model) -> Callable[[FeedbackInputs], FeedbackOutput]:
+    def run(inputs: FeedbackInputs) -> FeedbackOutput:
+        store = Store(":memory:")
+        try:
+            for item in inputs.umgebung.aufgaben:
+                store.add_task("vorbereitung", item.titel, "intern", item.faellig, "messung")
+            before = {task.id for task in store.tasks()}
+            with capture_run_messages() as messages:
+                outcome = feedback.handle(inputs.eingabe, store, Profile(), inputs.umgebung.heute, model)
+            tasks = store.tasks()
+            return FeedbackOutput(
+                raus=sorted(task.id for task in tasks if task.status == REJECTED),
+                neu=[
+                    NewTaskOut(titel=task.title, faellig=task.due_date)
+                    for task in tasks
+                    if task.id not in before and task.status in (OPEN, IN_PROGRESS)
+                ],
+                unklar=any(line.startswith("- nicht verstanden") for line in outcome.lines),
+                modell=model_said(messages),
+            )
+        finally:
+            store.close()
+
+    return run
+
+
+@dataclass
+class Aufgaben(Evaluator[FeedbackInputs, FeedbackOutput, Any]):
+    """Prueft, welche Aufgaben herausgenommen und welche ergaenzt wurden.
+
+    ``raus``: genau diese Nummern. Je neuer Aufgabe ``titel_enthaelt`` und
+    optional ``faellig``. ``unklar``: ob der Agent nachfragt (fehlt = nicht geprueft).
+    """
+
+    raus: list[int] = field(default_factory=list)
+    neu: list[dict] = field(default_factory=list)
+    unklar: bool | None = None
+
+    def __post_init__(self) -> None:
+        _known_keys(self.neu, {"titel_enthaelt", "faellig"}, "Aufgaben.neu")
+
+    def evaluate(self, ctx: EvaluatorContext[FeedbackInputs, FeedbackOutput, Any]) -> EvaluationReason:
+        problems = []
+        output = ctx.output
+        if output.raus != sorted(self.raus):
+            problems.append(f"raus erwartet {sorted(self.raus)}, herausgenommen {output.raus}")
+        added = list(output.neu)
+        if len(added) != len(self.neu):
+            got = ", ".join(task.titel for task in added) or "nichts"
+            problems.append(f"{len(self.neu)} neue Aufgaben erwartet, {len(added)} angelegt ({got})")
+        for want in self.neu:
+            part = want.get("titel_enthaelt", "")
+            task = next((t for t in added if part.casefold() in t.titel.casefold()), None)
+            if task is None:
+                problems.append(f"neue Aufgabe mit „{part}“ fehlt")
+                continue
+            added.remove(task)
+            if "faellig" in want and task.faellig != want["faellig"]:
+                problems.append(f"„{part}“: fällig {want['faellig']} erwartet, {task.faellig} angelegt")
+        if self.unklar is not None and output.unklar != self.unklar:
+            problems.append("Rückfrage erwartet, keine gestellt" if self.unklar else "unnötige Rückfrage")
+        return EvaluationReason(value=not problems, reason="; ".join(problems))
+
+
+# --- Status-Agent
+
+
+NUMBER = re.compile(r"\d+")
+
+
+def invented_numbers(answer: str, facts: str) -> list[str]:
+    """Zahlen der Antwort, die in den Fakten nicht vorkommen (auch Teile von Datum und Uhrzeit).
+
+    Ein kleines Modell erfindet gern Angaben wie "in 6 Minuten". Jede Ziffernfolge
+    der Antwort muss deshalb auch in dem stehen, was das Modell zu sehen bekam.
+    """
+    known = set(NUMBER.findall(facts))
+    return [number for number in dict.fromkeys(NUMBER.findall(answer)) if number not in known]
+
+
+class StatusTaskItem(Strict):
+    titel: str
+    faellig: date
+    termin: datetime | None = None  # Beginn des Termins hinter der Aufgabe
+
+
+class StatusSetup(Strict):
+    """Zeitpunkt der Abfrage und die offenen Aufgaben (Nummern 1, 2, 3 ... in dieser Reihenfolge)."""
+
+    jetzt: datetime
+    aufgaben: list[StatusTaskItem] = []
+
+
+class StatusInputs(Strict):
+    umgebung: StatusSetup
+    eingabe: str = status_agent.DEFAULT_QUESTION
+
+
+class StatusOutput(BaseModel):
+    antwort: str  # die Saetze des Modells, ohne die vom Code angehaengten Zeilen
+    naechste: int | None  # Nummer der Aufgabe, die der Code als naechste bestimmt hat
+    fakten: str  # was das Modell zu sehen bekam
+    modell: str = ""
+
+
+def status_task(model) -> Callable[[StatusInputs], StatusOutput]:
+    def run(inputs: StatusInputs) -> StatusOutput:
+        store = Store(":memory:")
+        try:
+            for number, item in enumerate(inputs.umgebung.aufgaben, 1):
+                if item.termin is None:
+                    store.add_task("manuell", item.titel, INTERNAL, item.faellig, "messung")
+                    continue
+                event_id = f"messung-{number}"
+                store.upsert_event(
+                    StoredEvent(event_id, item.titel, item.termin, item.termin + timedelta(minutes=30), INTERNAL)
+                )
+                store.upsert_task(event_id, "vorbereitung", item.titel, INTERNAL, item.faellig, "messung")
+            deps = status_agent.StatusDeps(now=inputs.umgebung.jetzt, store=store)
+            with capture_run_messages() as messages:
+                answer = status_agent.status_agent.run_sync(inputs.eingabe, model=model, deps=deps).output
+            facts = "\n".join([inputs.eingabe, *(f"{head}\n" + "\n".join(lines) for head, lines in deps.notes.items())])
+            return StatusOutput(
+                antwort=answer.strip(),
+                naechste=deps.item.task.id if deps.item else None,
+                fakten=facts,
+                modell=model_said(messages),
+            )
+        finally:
+            store.close()
+
+    return run
+
+
+@dataclass
+class Status(Evaluator[StatusInputs, StatusOutput, Any]):
+    """Prueft die Saetze des Status-Agenten.
+
+    ``naechste``: Nummer der Aufgabe, die dran ist ("keine" = es steht nichts an;
+    leer = nicht geprueft). ``nennt`` / ``nennt_nicht``: Textstuecke. ``verboten``:
+    Wendungen, die nie vorkommen duerfen. Zahlen der Antwort muessen aus der
+    Eingabe stammen (``zahlen_aus_eingabe``).
+    """
+
+    naechste: int | str = ""
+    nennt: list[str] = field(default_factory=list)
+    nennt_nicht: list[str] = field(default_factory=list)
+    verboten: list[str] = field(default_factory=lambda: ["du musst", "du solltest"])
+    hoechstens_zeichen: int = 400
+    zahlen_aus_eingabe: bool = True
+
+    def evaluate(self, ctx: EvaluatorContext[StatusInputs, StatusOutput, Any]) -> EvaluationReason:
+        problems = []
+        output = ctx.output
+        if self.naechste != "":
+            wanted = None if self.naechste == "keine" else self.naechste
+            if output.naechste != wanted:
+                problems.append(f"Aufgabe {wanted or 'keine'} erwartet, der Code wählte {output.naechste or 'keine'}")
+        text = output.antwort.casefold()
+        if not text:
+            problems.append("leere Antwort")
+        for part in self.nennt:
+            if part.casefold() not in text:
+                problems.append(f"„{part}“ fehlt in der Antwort")
+        for part in [*self.nennt_nicht, *self.verboten]:
+            if part.casefold() in text:
+                problems.append(f"„{part}“ gehört nicht in die Antwort")
+        if len(output.antwort) > self.hoechstens_zeichen:
+            problems.append(f"Antwort zu lang ({len(output.antwort)} Zeichen)")
+        if self.zahlen_aus_eingabe:
+            invented = invented_numbers(output.antwort, output.fakten)
+            if invented:
+                problems.append(f"Zahlen nicht aus der Eingabe: {', '.join(invented)}")
+        return EvaluationReason(value=not problems, reason="; ".join(problems))
+
+
+# --- Termin-Agent: Terminart
+
+
+class TerminSetup(Strict):
+    """Die Rollen des Nutzers, wie sie im Profil stuenden."""
+
+    rolle_intern: str = ""
+    rolle_kunde: str = ""
+    kunde: str = "Kunde ACME"
+
+
+class TerminInputs(Strict):
+    umgebung: TerminSetup
+    titel: str
+    beginn: datetime
+    minuten: int = 30
+    eingeladene: int = 4
+    kontext: Literal["intern", "kunde"] = "intern"
+
+
+class TerminOutput(BaseModel):
+    art: str
+    begruendung: str
+    ergebnisse: list[str]
+    modell: str = ""
+
+
+def termin_task(model) -> Callable[[TerminInputs], TerminOutput]:
+    def run(inputs: TerminInputs) -> TerminOutput:
+        setup = inputs.umgebung
+        profile = Profile(
+            contexts=(
+                Context(INTERNAL, INTERNAL, "Intern", role=setup.rolle_intern),
+                Context(CUSTOMER, CUSTOMER, setup.kunde, role=setup.rolle_kunde),
+            )
+        )
+        store = Store(":memory:")
+        try:
+            event = StoredEvent(
+                "messung",
+                inputs.titel,
+                inputs.beginn,
+                inputs.beginn + timedelta(minutes=inputs.minuten),
+                inputs.kontext,
+                attendees=inputs.eingeladene,
+            )
+            store.upsert_event(event)
+            store.upsert_task(event.id, "vorbereitung", f"Vorbereitung: {inputs.titel}", inputs.kontext, inputs.beginn.date(), "messung")
+            with capture_run_messages() as messages:
+                brief = meeting_agent.analyse(store.tasks()[0], event, profile, store, model, fresh=True)
+            return TerminOutput(
+                art=brief.meeting_type,
+                begruendung=brief.reason,
+                ergebnisse=list(brief.deliverables),
+                modell=model_said(messages),
+            )
+        finally:
+            store.close()
+
+    return run
+
+
+@dataclass
+class Terminart(Evaluator[TerminInputs, TerminOutput, Any]):
+    """Prueft die erkannte Terminart.
+
+    ``art``: die richtige id aus ``meeting_types.py`` oder mehrere vertretbare.
+    ``nicht``: ids, die falsch waeren, wenn es keine eindeutig richtige gibt
+    (etwa bei einem irrefuehrenden Stichwort im Titel). Zusaetzlich: Das Modell
+    hat selbst geantwortet (kein Rueckfall auf den Katalog) und nennt Ergebnisse
+    in erlaubter Zahl.
+    """
+
+    art: str | list[str] = ""
+    nicht: list[str] = field(default_factory=list)
+
+    def _allowed(self) -> list[str]:
+        return ([self.art] if self.art else []) if isinstance(self.art, str) else list(self.art)
+
+    def __post_init__(self) -> None:
+        unknown = [name for name in [*self._allowed(), *self.nicht] if name not in BY_ID]
+        if unknown or not (self._allowed() or self.nicht):
+            raise ValueError(
+                f"Terminart: art oder nicht angeben; unbekannt: {unknown}. Erlaubt: {', '.join(BY_ID)}."
+            )
+
+    def evaluate(self, ctx: EvaluatorContext[TerminInputs, TerminOutput, Any]) -> EvaluationReason:
+        problems = []
+        output = ctx.output
+        allowed = self._allowed()
+        if allowed and output.art not in allowed:
+            problems.append(f"Terminart {' oder '.join(allowed)} erwartet, erkannt {output.art}")
+        if output.art in self.nicht:
+            problems.append(f"Terminart {output.art} ist hier falsch")
+        if output.begruendung.startswith("Das Modell konnte den Termin nicht einordnen"):
+            problems.append("Modell lieferte nichts Brauchbares (Rückfall auf den Katalog)")
+        count = len(output.ergebnisse)
+        if not meeting_agent.MIN_DELIVERABLES <= count <= meeting_agent.MAX_DELIVERABLES:
+            problems.append(f"{count} Ergebnisse statt {meeting_agent.MIN_DELIVERABLES} bis {meeting_agent.MAX_DELIVERABLES}")
+        return EvaluationReason(value=not problems, reason="; ".join(problems))
+
+
+# --- Story-Erkennung durch das Modell
+
+
+class StoriesInputs(Strict):
+    """Ein Markdown-Dokument: direkt als Text oder als Datei.
+
+    Ein relativer Pfad gilt ab dem Repo. ``ohne_kuerzel`` entfernt Kuerzel wie
+    "QG-1:" aus den Ueberschriften, bevor das Modell sie sieht; so laesst sich an
+    einer Datei mit Kuerzeln messen, ob das Modell die Stories auch ohne erkennt.
+    """
+
+    markdown: str = ""
+    datei: str = ""
+    ohne_kuerzel: bool = False
+
+
+class StoriesOutput(BaseModel):
+    erkannt: list[str]  # Ueberschriften, die das Modell als Stories markiert hat
+    nach_regel: list[str]  # Ueberschriften, die die Regel (Kuerzel) als Stories erkennt
+    modell: str = ""
+
+
+def _plain(heading: str) -> str:
+    match = STORY_HEADING.match(heading)
+    return match.group(2) if match else heading
+
+
+def stories_task(model) -> Callable[[StoriesInputs], StoriesOutput]:
+    def run(inputs: StoriesInputs) -> StoriesOutput:
+        text = inputs.markdown
+        if inputs.datei:
+            path = Path(inputs.datei).expanduser()
+            text = (path if path.is_absolute() else REPO_ROOT / path).read_text(encoding="utf-8")
+        sections = stories.outline(text)[1]
+        by_rule = sorted(stories.rule_stories(sections))
+        shown = sections
+        if inputs.ohne_kuerzel:
+            shown = [dataclasses.replace(section, heading=_plain(section.heading)) for section in sections]
+        with capture_run_messages() as messages:
+            marked = stories._without_groups(shown, stories.model_stories(shown, model))
+        return StoriesOutput(
+            erkannt=[shown[index].heading for index in sorted(marked)],
+            nach_regel=[shown[index].heading for index in by_rule],
+            modell=model_said(messages),
+        )
+
+    return run
+
+
+@dataclass
+class Stories(Evaluator[StoriesInputs, StoriesOutput, Any]):
+    """Prueft, welche Ueberschriften das Modell als Stories erkennt.
+
+    ``erwartet``: genau diese Ueberschriften. ``wie_regel``: stattdessen die
+    Ueberschriften, die die Regel an den Kuerzeln erkennt (fuer Dateien mit Kuerzeln).
+    """
+
+    erwartet: list[str] = field(default_factory=list)
+    wie_regel: bool = False
+
+    def evaluate(self, ctx: EvaluatorContext[StoriesInputs, StoriesOutput, Any]) -> EvaluationReason:
+        expected = ctx.output.nach_regel if self.wie_regel else self.erwartet
+        found = ctx.output.erkannt
+        problems = []
+        missing = [heading for heading in expected if heading not in found]
+        extra = [heading for heading in found if heading not in expected]
+        if missing:
+            problems.append(f"nicht erkannt ({len(missing)} von {len(expected)}): {'; '.join(missing[:5])}")
+        if extra:
+            problems.append(f"zu viel erkannt ({len(extra)}): {'; '.join(extra[:5])}")
+        return EvaluationReason(value=not problems, reason="; ".join(problems))
+
+
+# --- Agenten und ihre Falldateien
+
+
+@dataclass(frozen=True)
+class Suite:
+    """Was zur Messung eines Agenten gehoert."""
+
+    dataset_type: Any  # Dataset[Eingabe, Ausgabe, Any]
+    evaluators: tuple[type, ...]
+    task: Callable[[object], Callable]  # Modell -> Aufgabe fuer pydantic-evals
+    timeout: float = TASK_TIMEOUT  # Sekunden je Lauf
+
+
+AGENTS: dict[str, Suite] = {
+    scrum_master.AGENT_NAME: Suite(Dataset[ScrumInputs, ScrumOutput, Any], (Bemerkungen,), scrum_task),
+    feedback.AGENT_NAME: Suite(Dataset[FeedbackInputs, FeedbackOutput, Any], (Aufgaben,), feedback_task),
+    status_agent.AGENT_NAME: Suite(Dataset[StatusInputs, StatusOutput, Any], (Status,), status_task),
+    # Der Termin-Agent denkt mit mittlerem Aufwand nach und braucht je Lauf deutlich laenger.
+    meeting_agent.AGENT_NAME: Suite(Dataset[TerminInputs, TerminOutput, Any], (Terminart,), termin_task, timeout=300.0),
+    stories.AGENT_NAME: Suite(Dataset[StoriesInputs, StoriesOutput, Any], (Stories,), stories_task),
+}

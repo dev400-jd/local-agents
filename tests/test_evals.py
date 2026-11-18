@@ -3,18 +3,26 @@
 import json
 import tempfile
 import unittest
+import warnings
 from datetime import date, datetime
 from pathlib import Path
 
 from pydantic_ai import models
-from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_evals import Case
 
+from local_agents import eval_suites as suites
 from local_agents import evals
 from local_agents.testing import structured_reply
 
 models.ALLOW_MODEL_REQUESTS = False
+
+
+def setUpModule() -> None:
+    # pydantic-evals fuehrt die Agenten in Hilfs-Threads aus; deren Ereignis-
+    # schleifen raeumt Python erst am Ende ab und warnt dann. Fuer die Tests ohne Belang.
+    warnings.simplefilter("ignore", ResourceWarning)
 
 
 def answering(payload: dict) -> FunctionModel:
@@ -26,11 +34,11 @@ def answering(payload: dict) -> FunctionModel:
     return FunctionModel(respond)
 
 
-SCRUM_SETUP = evals.ScrumSetup(
+SCRUM_SETUP = suites.ScrumSetup(
     heute=date(2026, 11, 16),
     stories=[
-        evals.StoryItem(kuerzel="QG-1", titel="Prüfregeln", feature="Import"),
-        evals.StoryItem(kuerzel="QG-3", titel="Freigabe", feature="Import"),
+        suites.StoryItem(kuerzel="QG-1", titel="Prüfregeln", feature="Import"),
+        suites.StoryItem(kuerzel="QG-3", titel="Freigabe", feature="Import"),
     ],
 )
 
@@ -39,8 +47,8 @@ def scrum_case(name: str = "Fall", vorher: tuple[str, ...] = (), **check) -> Cas
     eingabe = check.pop("eingabe")
     return Case(
         name=name,
-        inputs=evals.ScrumInputs(umgebung=SCRUM_SETUP, eingabe=eingabe, vorher=list(vorher)),
-        evaluators=(evals.Bemerkungen(**check),),
+        inputs=suites.ScrumInputs(umgebung=SCRUM_SETUP, eingabe=eingabe, vorher=list(vorher)),
+        evaluators=(suites.Bemerkungen(**check),),
     )
 
 
@@ -98,15 +106,15 @@ class TestScrumMasterGrader(unittest.TestCase):
 
     def test_unknown_key_in_expectation_is_rejected(self) -> None:
         with self.assertRaises(ValueError) as raised:
-            evals.Bemerkungen(erwartet=[{"story": "QG-1", "enthält": ["x"]}])
+            suites.Bemerkungen(erwartet=[{"story": "QG-1", "enthält": ["x"]}])
         self.assertIn("unbekannte Schluessel ['enthält']", str(raised.exception))
 
 
-FEEDBACK_SETUP = evals.FeedbackSetup(
+FEEDBACK_SETUP = suites.FeedbackSetup(
     heute=date(2026, 11, 20),
     aufgaben=[
-        evals.TaskItem(titel="Vorbereitung: Daily", faellig=date(2026, 11, 22)),
-        evals.TaskItem(titel="Vorbereitung: Jour fixe", faellig=date(2026, 11, 22)),
+        suites.TaskItem(titel="Vorbereitung: Daily", faellig=date(2026, 11, 22)),
+        suites.TaskItem(titel="Vorbereitung: Jour fixe", faellig=date(2026, 11, 22)),
     ],
 )
 
@@ -114,8 +122,8 @@ FEEDBACK_SETUP = evals.FeedbackSetup(
 def feedback_case(eingabe: str, **check) -> Case:
     return Case(
         name="Fall",
-        inputs=evals.FeedbackInputs(umgebung=FEEDBACK_SETUP, eingabe=eingabe),
-        evaluators=(evals.Aufgaben(**check),),
+        inputs=suites.FeedbackInputs(umgebung=FEEDBACK_SETUP, eingabe=eingabe),
+        evaluators=(suites.Aufgaben(**check),),
     )
 
 
@@ -151,6 +159,150 @@ class TestFeedbackGrader(unittest.TestCase):
         self.assertEqual(problems("rueckmeldung", feedback_case("ja passt so"), FunctionModel(fail)), [])
 
 
+def saying(text: str) -> FunctionModel:
+    """Modell, das immer denselben freien Text antwortet."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(text)])
+
+    return FunctionModel(respond)
+
+
+WEEK = suites.StatusSetup(
+    jetzt=datetime(2026, 11, 16, 9, 0),
+    aufgaben=[
+        suites.StatusTaskItem(
+            titel="Vorbereitung: Architekturrunde (Di 17.11. 10:00)",
+            faellig=date(2026, 11, 16),
+            termin=datetime(2026, 11, 17, 10, 0),
+        ),
+        suites.StatusTaskItem(titel="Reisekosten einreichen", faellig=date(2026, 11, 18)),
+    ],
+)
+
+
+def status_case(**check) -> Case:
+    return Case(name="Fall", inputs=suites.StatusInputs(umgebung=WEEK), evaluators=(suites.Status(**check),))
+
+
+class TestStatusGrader(unittest.TestCase):
+    def test_answer_naming_the_next_task_passes(self) -> None:
+        case = status_case(naechste=1, nennt=["Architekturrunde"], nennt_nicht=["Reisekosten"])
+        model = saying("Als Nächstes die Vorbereitung der Architekturrunde, sie ist heute fällig, Termin am 17.11. um 10:00.")
+        self.assertEqual(problems("status", case, model), [])
+
+    def test_invented_number_other_task_and_forbidden_phrase_are_named(self) -> None:
+        case = status_case(naechste=2, nennt=["Architekturrunde"], nennt_nicht=["Reisekosten"])
+        model = saying("Du musst in 45 Minuten die Reisekosten einreichen.")
+        self.assertIn(
+            "Aufgabe 2 erwartet, der Code wählte 1; „Architekturrunde“ fehlt in der Antwort; "
+            "„Reisekosten“ gehört nicht in die Antwort; „du musst“ gehört nicht in die Antwort; "
+            "Zahlen nicht aus der Eingabe: 45",
+            problems("status", case, model)[0],
+        )
+
+    def test_numbers_must_come_from_what_the_model_saw(self) -> None:
+        facts = "Stand Mo 16.11.2026, 09:00 Uhr\n#3 Daily [fertig bis Di 17.11.; Termin in 2 Std 30 Min]"
+        self.assertEqual(suites.invented_numbers("Aufgabe 3 ist am 17.11. fällig, in 2 Std 30 Min.", facts), [])
+        self.assertEqual(suites.invented_numbers("In 150 Minuten, also um 11:30.", facts), ["150"])
+
+    def test_every_repo_case_matches_what_the_code_picks(self) -> None:
+        # Mit einer Antwort, die genau das Verlangte nennt, muss jeder Fall bestehen:
+        # Das prueft die Angabe "naechste" und die Umgebung der Falldatei.
+        for case in evals.load_cases([evals.REPO_CASES])["status"]:
+            check = case.evaluators[0]
+            model = saying(" ".join(check.nennt) or "Es steht keine Aufgabe an.")
+            self.assertEqual(problems("status", case, model), [], case.name)
+
+
+def termin_case(titel: str, art) -> Case:
+    inputs = suites.TerminInputs(
+        umgebung=suites.TerminSetup(rolle_kunde="Solution Architect"),
+        titel=titel,
+        beginn=datetime(2026, 11, 17, 9, 0),
+        kontext="kunde",
+    )
+    return Case(name="Fall", inputs=inputs, evaluators=(suites.Terminart(art=art),))
+
+
+class TestTerminGrader(unittest.TestCase):
+    def test_right_type_passes_and_wrong_type_is_named(self) -> None:
+        model = answering({"type": "daily", "reason": "Titel", "deliverables": ["Stand", "Hindernisse"]})
+        self.assertEqual(problems("termin", termin_case("Daily", "daily"), model), [])
+        self.assertEqual(problems("termin", termin_case("Daily", ["daily", "jour_fixe"]), model), [])
+        self.assertIn(
+            "Terminart workshop oder kickoff erwartet, erkannt daily",
+            problems("termin", termin_case("Daily", ["workshop", "kickoff"]), model)[0],
+        )
+
+    def test_fallback_to_the_catalogue_counts_as_failure(self) -> None:
+        model = answering({"type": "gibtsnicht", "reason": "x", "deliverables": ["a"]})
+        self.assertIn("Rückfall auf den Katalog", problems("termin", termin_case("Daily", "daily"), model)[0])
+
+    def test_unknown_type_in_the_case_file_is_rejected(self) -> None:
+        for wrong in ({"art": "dayli"}, {"nicht": ["dayli"]}, {}):
+            with self.assertRaises(ValueError):
+                suites.Terminart(**wrong)
+
+    def test_only_the_wrong_type_can_be_named(self) -> None:
+        def case(nicht: list[str]) -> Case:
+            checked = termin_case("Review der Abrechnung", "daily")
+            return Case(name="Fall", inputs=checked.inputs, evaluators=(suites.Terminart(nicht=nicht),))
+
+        model = answering({"type": "praesentation", "reason": "Titel", "deliverables": ["Unterlagen"]})
+        self.assertEqual(problems("termin", case(["sprint_review"]), model), [])
+        self.assertIn("Terminart praesentation ist hier falsch", problems("termin", case(["praesentation"]), model)[0])
+
+
+DOCUMENT = """# Titel
+
+## Ziel
+
+Text.
+
+## QG-1: Erste Story
+
+Als Nutzer ...
+
+## QG-2: Zweite Story
+
+Als Nutzer ...
+"""
+
+
+def stories_case(ohne_kuerzel: bool = False, **check) -> Case:
+    inputs = suites.StoriesInputs(markdown=DOCUMENT, ohne_kuerzel=ohne_kuerzel)
+    return Case(name="Fall", inputs=inputs, evaluators=(suites.Stories(**check),))
+
+
+class TestStoryDetection(unittest.TestCase):
+    def test_expected_headings_pass_and_differences_are_named(self) -> None:
+        case = stories_case(erwartet=["QG-1: Erste Story", "QG-2: Zweite Story"])
+        self.assertEqual(problems("stories", case, answering({"stories": [2, 3]})), [])
+        self.assertIn(
+            "nicht erkannt (1 von 2): QG-2: Zweite Story; zu viel erkannt (1): Ziel",
+            problems("stories", case, answering({"stories": [1, 2]}))[0],
+        )
+
+    def test_model_sees_headings_without_keys_and_rule_gives_the_expectation(self) -> None:
+        seen: list[str] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(info.instructions)
+            return structured_reply(info, {"stories": [2, 3]})
+
+        case = stories_case(ohne_kuerzel=True, wie_regel=True)
+        self.assertEqual(problems("stories", case, FunctionModel(respond)), [])
+        self.assertIn("## Erste Story", seen[0])
+        self.assertNotIn("QG-1", seen[0])
+
+    def test_file_path_is_relative_to_the_repo(self) -> None:
+        inputs = suites.StoriesInputs(datei="tests/data/feature_beispiel.md", ohne_kuerzel=True)
+        output = suites.stories_task(answering({"stories": []}))(inputs)
+        self.assertGreater(len(output.nach_regel), 0)
+        self.assertEqual(output.erkannt, [])
+
+
 class TestRunAndReport(unittest.TestCase):
     def test_runs_are_repeated_and_a_broken_model_counts_as_failed_run(self) -> None:
         calls = []
@@ -170,6 +322,19 @@ class TestRunAndReport(unittest.TestCase):
         self.assertEqual(len(a.failures), 1)
         self.assertIn("Fehler: RuntimeError: kein Modell", a.failures[0])
         self.assertEqual((b.passed, b.runs, b.mark), (3, 3, "✓"))
+
+    def test_outage_of_the_model_server_is_reported_and_not_saved(self) -> None:
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise ConnectionError("Ollama antwortet nicht")
+
+        cases = [scrum_case(name="a", eingabe="QG-1 ist fertig", erwartet=[{"story": "QG-1"}])]
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / evals.RESULTS_NAME
+            printed: list[str] = []
+            results = evals.evaluate("scrum_master", cases, FunctionModel(respond), "modell", 2, path, printed.append)
+            self.assertEqual((results[0].passed, results[0].outages), (0, 2))
+            self.assertIn("Messung unvollständig: In 2 Läufen", printed[-1])
+            self.assertFalse(path.exists())
 
     def results(self, **passed: int) -> list[evals.CaseResult]:
         return [evals.CaseResult(name, runs=3, passed=count, seconds=6.0) for name, count in passed.items()]
@@ -246,7 +411,7 @@ cases:
 class TestCaseFiles(unittest.TestCase):
     def test_repo_cases_load_and_cover_both_agents(self) -> None:
         cases = evals.load_cases([evals.REPO_CASES])
-        self.assertEqual(sorted(cases), ["rueckmeldung", "scrum_master"])
+        self.assertEqual(sorted(cases), ["rueckmeldung", "scrum_master", "status", "stories", "termin"])
         self.assertGreaterEqual(len(cases["scrum_master"]), 15)
         self.assertGreaterEqual(len(cases["rueckmeldung"]), 12)
 

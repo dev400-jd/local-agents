@@ -24,7 +24,7 @@ bisher selbst eine Aufgabe.
 | Story-Leser | `stories.py` | Liest User Stories aus Markdown unabhängig vom Aufbau der Dateien | Nur Markdown im Ordner, kein Anschluss an das Projektwerkzeug. Erkennt keine Änderungen zwischen zwei Ständen. |
 | Scrum Master | `scrum_master.py`, `telegram_bot.py` | Vermerkt Bemerkungen je Story, auf Wunsch fürs nächste Daily, per Terminal, Dialog oder Telegram | Beantwortet keine Fragen. Ein Satz zu mehreren Stories landet ganz bei jeder. Der Daily-Bezug hängt an Stichwörtern. |
 | Sprache | `voice.py`, `listen.py` | Vorlesen (Piper) und Zuhören (Whisper), beides lokal | Kein durchgehendes Gespräch, nur Frage und Antwort an einer Stelle im Planungs-Agenten. |
-| Messung | `evals.py` | Lässt Scrum Master und Rückmeldung gegen feste Fälle laufen (auf Basis von pydantic-evals), mehrfach, mit Quote, Mitschnitt der Modellantwort und Vergleich zum letzten Lauf | 28 erfundene Fälle, noch keine echten. Keine Fälle für Status-Agent, Termin-Agent und Story-Erkennung. |
+| Messung | `evals.py`, `eval_suites.py`, `eval_capture.py` | Lässt fünf Agenten gegen feste Fälle laufen (auf Basis von pydantic-evals): Scrum Master, Rückmeldung, Status-Agent, Terminart, Story-Erkennung. Mehrfach, mit Quote, Mitschnitt der Modellantwort und Vergleich zum letzten Lauf. `merke` hält echte Fälle fest. | 55 erfundene Fälle, noch keine echten. Nicht gemessen: Ergebnisliste des Termin-Agenten, freie Texte von Kalender- und Asana-Agent, Spracheingabe. |
 | Profil und Datenbank | `profile.py`, `store.py` | Gemeinsames Gedächtnis: Kontexte, Rolle, Stresslevel, Aufgaben, Notizen, Laufprotokoll | Kein Gedächtnis über Gespräche, keine gelernten Vorlieben. |
 
 ## Fahrplan je Kategorie
@@ -67,10 +67,10 @@ nachgemessen (57 von 60 Läufen statt 30 von 36). Als Nächstes:
   die Zuordnung über ein Stichwort aus dem Namen schwankt
 - Rückmeldung: bei „beide Aufgaben zu einem Termin" wird öfter nur eine
   herausgenommen
-- echte Fälle aus dem Alltag sammeln
+- echte Fälle aus dem Alltag sammeln (`evals merke`)
+- Regel: Jeder neue Agent bekommt seine Fälle gleich mit
 - Unterschiede zwischen Einstellungen nur mit mehr Läufen beurteilen: Zwei
   Messläufe desselben Stands unterscheiden sich um einige Läufe
-- Fälle für Status-Agent, Termin-Agent und Story-Erkennung
 
 ### 4. Verlässlichkeit des kleinen Modells
 
@@ -124,3 +124,7 @@ Ohne Messung ist nicht zu erkennen, ob die anderen Schritte etwas verbessern.
   Code-Standard bleibt `gpt-oss:20b`. `qwen3.8:27b-mlx` besteht alle Messfälle
   (140 von 140 Läufen gegen 130 bis 136), ist aber etwa fünfmal langsamer und
   belegt 21 bis 23 GB von 24 GB RAM.
+- 2026-11-18: Modell je Agent nach den Messwerten: `qwen3.8:27b-mlx` für Scrum
+  Master und Story-Erkennung, wo es klar besser ist; `gpt-oss:20b` für alles
+  andere, weil es bei Status-Agent und Terminart gleich gut und fünf- bis
+  zehnmal schneller ist. Eingestellt wird das im Profil, nicht im Repo.

@@ -1,0 +1,2090 @@
+{
+  "$defs": {
+    "CacheConfig": {
+      "additionalProperties": false,
+      "description": "Detailed prompt-cache configuration, for the [`cache`][pydantic_ai.settings.ModelSettings.cache] setting.\n\n`{}` is the same as `cache=True`, and `{'retention': '1h'}` the same as `cache='1h'`.",
+      "properties": {
+        "retention": {
+          "enum": [
+            "5m",
+            "30m",
+            "1h",
+            "12h"
+          ],
+          "title": "Retention",
+          "type": "string"
+        },
+        "messages": {
+          "title": "Messages",
+          "type": "boolean"
+        }
+      },
+      "title": "CacheConfig",
+      "type": "object"
+    },
+    "Case": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "inputs": {
+          "$ref": "#/$defs/StatusInputs"
+        },
+        "metadata": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata"
+        },
+        "expected_output": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StatusOutput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "evaluators": {
+          "default": [],
+          "items": {
+            "anyOf": [
+              {
+                "const": "Status",
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/spec_Status"
+              },
+              {
+                "$ref": "#/$defs/short_spec_Equals"
+              },
+              {
+                "$ref": "#/$defs/spec_Equals"
+              },
+              {
+                "const": "EqualsExpected",
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/short_spec_EqualsExpected"
+              },
+              {
+                "$ref": "#/$defs/short_spec_Contains"
+              },
+              {
+                "$ref": "#/$defs/spec_Contains"
+              },
+              {
+                "$ref": "#/$defs/short_spec_IsInstance"
+              },
+              {
+                "$ref": "#/$defs/spec_IsInstance"
+              },
+              {
+                "$ref": "#/$defs/short_spec_MaxDuration"
+              },
+              {
+                "$ref": "#/$defs/short_spec_LLMJudge"
+              },
+              {
+                "$ref": "#/$defs/spec_LLMJudge"
+              },
+              {
+                "$ref": "#/$defs/short_spec_HasMatchingSpan"
+              },
+              {
+                "$ref": "#/$defs/spec_HasMatchingSpan"
+              },
+              {
+                "$ref": "#/$defs/short_spec_ToolCorrectness"
+              },
+              {
+                "$ref": "#/$defs/spec_ToolCorrectness"
+              },
+              {
+                "$ref": "#/$defs/short_spec_TrajectoryMatch"
+              },
+              {
+                "$ref": "#/$defs/spec_TrajectoryMatch"
+              },
+              {
+                "$ref": "#/$defs/spec_ArgumentCorrectness"
+              },
+              {
+                "$ref": "#/$defs/short_spec_MaxToolCalls"
+              },
+              {
+                "$ref": "#/$defs/spec_MaxToolCalls"
+              },
+              {
+                "$ref": "#/$defs/short_spec_MaxModelRequests"
+              },
+              {
+                "$ref": "#/$defs/spec_MaxModelRequests"
+              },
+              {
+                "$ref": "#/$defs/spec_GEval"
+              }
+            ]
+          },
+          "title": "Evaluators",
+          "type": "array"
+        }
+      },
+      "required": [
+        "inputs"
+      ],
+      "title": "Case",
+      "type": "object"
+    },
+    "KnownModelName": {
+      "enum": [
+        "anthropic:claude-fable-5-2",
+        "anthropic:claude-haiku-4-5",
+        "anthropic:claude-haiku-5-5",
+        "anthropic:claude-opus-4-8",
+        "anthropic:claude-opus-5-5",
+        "anthropic:claude-sonnet-4-6",
+        "anthropic:claude-sonnet-5-5",
+        "bedrock-mantle:openai.gpt-5.6-luna",
+        "bedrock-mantle:openai.gpt-5.6-sol",
+        "bedrock-mantle:openai.gpt-5.6-terra",
+        "bedrock-mantle:openai.gpt-6-astra",
+        "bedrock-mantle:openai.gpt-6-luna",
+        "bedrock-mantle:openai.gpt-6.1-sol",
+        "bedrock-mantle:openai.gpt-6.1-terra",
+        "bedrock-mantle:openai.gpt-oss-120b",
+        "bedrock-mantle:openai.gpt-oss-20b",
+        "bedrock:deepseek.v3.2",
+        "bedrock:global.amazon.nova-2-lite-v1:0",
+        "bedrock:global.anthropic.claude-fable-5-2",
+        "bedrock:global.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "bedrock:global.anthropic.claude-haiku-5-5",
+        "bedrock:global.anthropic.claude-opus-4-8",
+        "bedrock:global.anthropic.claude-opus-5-5",
+        "bedrock:global.anthropic.claude-sonnet-4-6",
+        "bedrock:global.anthropic.claude-sonnet-5-5",
+        "bedrock:global.moonshotai.kimi-k3",
+        "bedrock:global.moonshotai.kimi-k3.1",
+        "bedrock:global.openai.gpt-5.6-luna",
+        "bedrock:global.openai.gpt-5.6-sol",
+        "bedrock:global.openai.gpt-5.6-terra",
+        "bedrock:global.openai.gpt-6-astra",
+        "bedrock:global.openai.gpt-6-luna",
+        "bedrock:global.openai.gpt-6.1-sol",
+        "bedrock:global.xai.grok-4.7",
+        "bedrock:global.zai.glm-5.3",
+        "bedrock:google.gemma-3-27b-it",
+        "bedrock:minimax.minimax-m2.5",
+        "bedrock:mistral.devstral-2-123b",
+        "bedrock:mistral.magistral-small-2509",
+        "bedrock:mistral.ministral-3-14b-instruct",
+        "bedrock:mistral.mistral-large-3-675b-instruct",
+        "bedrock:moonshotai.kimi-k2.5",
+        "bedrock:nvidia.nemotron-nano-3-30b",
+        "bedrock:nvidia.nemotron-super-3-120b",
+        "bedrock:openai.gpt-oss-120b-1:0",
+        "bedrock:openai.gpt-oss-20b-1:0",
+        "bedrock:qwen.qwen3-coder-next",
+        "bedrock:qwen.qwen3-next-80b-a3b",
+        "bedrock:qwen.qwen3-vl-235b-a22b",
+        "bedrock:us.amazon.nova-lite-v1:0",
+        "bedrock:us.amazon.nova-micro-v1:0",
+        "bedrock:us.amazon.nova-premier-v1:0",
+        "bedrock:us.amazon.nova-pro-v1:0",
+        "bedrock:us.deepseek.r1-v1:0",
+        "bedrock:us.meta.llama3-3-70b-instruct-v1:0",
+        "bedrock:us.meta.llama4-maverick-17b-instruct-v1:0",
+        "bedrock:us.meta.llama4-scout-17b-instruct-v1:0",
+        "bedrock:us.mistral.pixtral-large-2502-v1:0",
+        "bedrock:us.writer.palmyra-x5-v1:0",
+        "bedrock:zai.glm-4.7",
+        "cerebras:gpt-oss-120b",
+        "cerebras:qwen-3.8-27b",
+        "cohere:command-a-03-2025",
+        "cohere:command-a-plus-05-2026",
+        "cohere:command-a-reasoning-08-2025",
+        "cohere:command-a-vision-07-2025",
+        "cohere:command-r-08-2024",
+        "cohere:command-r-plus-08-2024",
+        "cohere:command-r7b-12-2024",
+        "crusoe:deepseek-ai/DeepSeek-V4.1-Flash",
+        "crusoe:google/gemma-4-31b-it",
+        "crusoe:nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B",
+        "crusoe:nvidia/nemotron-3.5-lightning-30b-a3b",
+        "crusoe:nvidia/nemotron-3.5-super-vl-120b-a12b",
+        "crusoe:openai/gpt-oss-120b",
+        "crusoe:qwen/Qwen3.8-27B",
+        "crusoe:zai-org/GLM-5.3",
+        "crusoe:zai-org/GLM-5.3-Flash",
+        "deepseek:deepseek-flash",
+        "deepseek:deepseek-v4-pro",
+        "gateway/anthropic:claude-fable-5-2",
+        "gateway/anthropic:claude-haiku-4-5",
+        "gateway/anthropic:claude-haiku-5-5",
+        "gateway/anthropic:claude-opus-4-8",
+        "gateway/anthropic:claude-opus-5-5",
+        "gateway/anthropic:claude-sonnet-4-6",
+        "gateway/anthropic:claude-sonnet-5-5",
+        "gateway/bedrock:deepseek.v3.2",
+        "gateway/bedrock:global.amazon.nova-2-lite-v1:0",
+        "gateway/bedrock:global.anthropic.claude-fable-5-2",
+        "gateway/bedrock:global.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "gateway/bedrock:global.anthropic.claude-haiku-5-5",
+        "gateway/bedrock:global.anthropic.claude-opus-4-8",
+        "gateway/bedrock:global.anthropic.claude-opus-5-5",
+        "gateway/bedrock:global.anthropic.claude-sonnet-4-6",
+        "gateway/bedrock:global.anthropic.claude-sonnet-5-5",
+        "gateway/bedrock:global.moonshotai.kimi-k3",
+        "gateway/bedrock:global.moonshotai.kimi-k3.1",
+        "gateway/bedrock:global.openai.gpt-5.6-luna",
+        "gateway/bedrock:global.openai.gpt-5.6-sol",
+        "gateway/bedrock:global.openai.gpt-5.6-terra",
+        "gateway/bedrock:global.openai.gpt-6-astra",
+        "gateway/bedrock:global.openai.gpt-6-luna",
+        "gateway/bedrock:global.openai.gpt-6.1-sol",
+        "gateway/bedrock:global.xai.grok-4.7",
+        "gateway/bedrock:google.gemma-3-27b-it",
+        "gateway/bedrock:minimax.minimax-m2.5",
+        "gateway/bedrock:mistral.devstral-2-123b",
+        "gateway/bedrock:mistral.magistral-small-2509",
+        "gateway/bedrock:mistral.ministral-3-14b-instruct",
+        "gateway/bedrock:mistral.mistral-large-3-675b-instruct",
+        "gateway/bedrock:moonshotai.kimi-k2.5",
+        "gateway/bedrock:nvidia.nemotron-nano-3-30b",
+        "gateway/bedrock:nvidia.nemotron-super-3-120b",
+        "gateway/bedrock:openai.gpt-oss-120b-1:0",
+        "gateway/bedrock:openai.gpt-oss-20b-1:0",
+        "gateway/bedrock:qwen.qwen3-coder-next",
+        "gateway/bedrock:qwen.qwen3-next-80b-a3b",
+        "gateway/bedrock:qwen.qwen3-vl-235b-a22b",
+        "gateway/bedrock:us.amazon.nova-premier-v1:0",
+        "gateway/bedrock:us.meta.llama4-maverick-17b-instruct-v1:0",
+        "gateway/bedrock:us.meta.llama4-scout-17b-instruct-v1:0",
+        "gateway/bedrock:us.mistral.pixtral-large-2502-v1:0",
+        "gateway/bedrock:us.writer.palmyra-x5-v1:0",
+        "gateway/bedrock:zai.glm-4.7",
+        "gateway/google-cloud:gemini-3-pro-image",
+        "gateway/google-cloud:gemini-3.1-flash-image",
+        "gateway/google-cloud:gemini-3.1-flash-lite",
+        "gateway/google-cloud:gemini-3.1-flash-lite-image",
+        "gateway/google-cloud:gemini-3.1-pro-preview",
+        "gateway/google-cloud:gemini-3.5-flash-lite",
+        "gateway/google-cloud:gemini-3.8-flash",
+        "gateway/google-cloud:gemini-4-argon",
+        "gateway/google-cloud:gemini-4-carbon",
+        "gateway/google:gemini-3-pro-image",
+        "gateway/google:gemini-3.1-flash-image",
+        "gateway/google:gemini-3.1-flash-lite",
+        "gateway/google:gemini-3.1-flash-lite-image",
+        "gateway/google:gemini-3.1-pro-preview",
+        "gateway/google:gemini-3.5-flash-lite",
+        "gateway/google:gemini-3.8-flash",
+        "gateway/google:gemini-4-argon",
+        "gateway/google:gemini-4-carbon",
+        "gateway/groq:openai/gpt-oss-120b",
+        "gateway/groq:openai/gpt-oss-20b",
+        "gateway/groq:qwen/qwen3.8-27b",
+        "gateway/openai:gpt-5.6-luna",
+        "gateway/openai:gpt-5.6-sol",
+        "gateway/openai:gpt-5.6-terra",
+        "gateway/openai:gpt-6-astra",
+        "gateway/openai:gpt-6-luna",
+        "gateway/openai:gpt-6.1-sol",
+        "gateway/openai:gpt-6.1-terra",
+        "google-cloud:gemini-3-pro-image",
+        "google-cloud:gemini-3.1-flash-image",
+        "google-cloud:gemini-3.1-flash-lite",
+        "google-cloud:gemini-3.1-flash-lite-image",
+        "google-cloud:gemini-3.1-pro-preview",
+        "google-cloud:gemini-3.5-flash-lite",
+        "google-cloud:gemini-3.8-flash",
+        "google-cloud:gemini-4-argon",
+        "google-cloud:gemini-4-carbon",
+        "google-decisions:gemini-decision-1",
+        "google:gemini-3-pro-image",
+        "google:gemini-3.1-flash-image",
+        "google:gemini-3.1-flash-lite",
+        "google:gemini-3.1-flash-lite-image",
+        "google:gemini-3.1-pro-preview",
+        "google:gemini-3.5-flash-lite",
+        "google:gemini-3.8-flash",
+        "google:gemini-4-argon",
+        "google:gemini-4-carbon",
+        "groq:openai/gpt-oss-120b",
+        "groq:openai/gpt-oss-20b",
+        "groq:qwen/qwen3.8-27b",
+        "heroku:claude-4-5-haiku",
+        "heroku:claude-4-6-sonnet",
+        "heroku:claude-fable-5-1",
+        "heroku:claude-haiku-5-5",
+        "heroku:claude-opus-4-8",
+        "heroku:claude-opus-5-5",
+        "heroku:claude-sonnet-5-5",
+        "heroku:gpt-oss-120b",
+        "heroku:nova-2-lite",
+        "heroku:nova-pro",
+        "huggingface:MiniMaxAI/MiniMax-M3",
+        "huggingface:Qwen/Qwen3.8-27B",
+        "huggingface:deepseek-ai/DeepSeek-V4-Pro",
+        "huggingface:deepseek-ai/DeepSeek-V4.1-Flash",
+        "huggingface:google/gemma-4-31B-it",
+        "huggingface:meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
+        "huggingface:moonshotai/Kimi-K3",
+        "huggingface:openai/gpt-oss-120b",
+        "huggingface:zai-org/GLM-5.3",
+        "meta:muse-spark-1.3",
+        "meta:muse-spark-1.3-contributor",
+        "meta:muse-wonder-1.0",
+        "mistral:codestral-latest",
+        "mistral:magistral-medium-latest",
+        "mistral:magistral-small-latest",
+        "mistral:ministral-14b-latest",
+        "mistral:ministral-3b-latest",
+        "mistral:ministral-8b-latest",
+        "mistral:mistral-large-latest",
+        "mistral:mistral-medium-latest",
+        "mistral:mistral-small-latest",
+        "moonshotai:kimi-k2.6",
+        "moonshotai:kimi-k2.7-code",
+        "moonshotai:kimi-k2.7-code-highspeed",
+        "moonshotai:kimi-k3",
+        "moonshotai:kimi-k3.1-pro",
+        "moonshotai:kimi-k3.1-pro-highspeed",
+        "openai-chat:gpt-5.6-luna",
+        "openai-chat:gpt-5.6-sol",
+        "openai-chat:gpt-5.6-terra",
+        "openai-chat:gpt-6-astra",
+        "openai-chat:gpt-6-luna",
+        "openai-chat:gpt-6.1-sol",
+        "openai-chat:gpt-6.1-terra",
+        "openai-decisions:gpt-6-luna",
+        "openai:gpt-5.6-luna",
+        "openai:gpt-5.6-sol",
+        "openai:gpt-5.6-terra",
+        "openai:gpt-6-astra",
+        "openai:gpt-6-luna",
+        "openai:gpt-6.1-sol",
+        "openai:gpt-6.1-terra",
+        "snowflake:claude-haiku-4-5",
+        "snowflake:claude-opus-4-8",
+        "snowflake:claude-opus-5-5",
+        "snowflake:claude-sonnet-4-6",
+        "snowflake:claude-sonnet-5-5",
+        "snowflake:llama3.3-70b",
+        "snowflake:llama4-maverick",
+        "snowflake:mistral-large2",
+        "snowflake:mistral-large3",
+        "snowflake:openai-gpt-5.6-luna",
+        "snowflake:openai-gpt-5.6-sol",
+        "snowflake:openai-gpt-5.6-terra",
+        "snowflake:openai-gpt-6-astra",
+        "snowflake:openai-gpt-6-luna",
+        "snowflake:openai-gpt-6-sol",
+        "snowflake:openai-gpt-6.1-terra",
+        "test",
+        "typesafe:jev-latest",
+        "typesafe:jev-preview",
+        "xai:grok-3",
+        "xai:grok-3-mini",
+        "xai:grok-4-1-fast-non-reasoning",
+        "xai:grok-4-1-fast-reasoning",
+        "xai:grok-4.20-multi-agent",
+        "xai:grok-4.3",
+        "xai:grok-4.7",
+        "xai:grok-build-0.1",
+        "zai:glm-4.5-air",
+        "zai:glm-4.6v",
+        "zai:glm-4.7",
+        "zai:glm-4.7-flash",
+        "zai:glm-5-turbo",
+        "zai:glm-5.3",
+        "zai:glm-5.3-flash",
+        "zai:glm-5.3-flashx",
+        "zai:glm-5v-turbo"
+      ],
+      "type": "string"
+    },
+    "ModelSettings": {
+      "additionalProperties": false,
+      "description": "Settings to configure an LLM.\n\nIncludes only settings which apply to multiple models / model providers,\nthough not all of these settings are supported by all models.\n\nEach field's `Supported by:` list names the model classes that put the setting on the wire. A bare\nname covers every interface that model serves, so `OpenAI` means both\n[`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and\n[`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]; a name qualified with an\ninterface, like `OpenAI Chat Completions`, covers only that one, because the Responses API does\nnot accept the setting at all.\n\nThese lists are parsed and checked against the wire by\n`tests/models/test_model_settings_support.py`, so keep the `* Name` bullet shape and put any nuance in\nparentheses after the name.\n\nA model ignores a setting it doesn't support, so the same settings work across models. For the settings\nwhose absence changes what the request guarantees (`timeout`, `max_retries`, `stop_sequences`,\n`parallel_tool_calls=False`, `extra_headers` and `extra_body`), it emits an\n[`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]; the others, like `temperature`,\nare ignored silently. A model class declares what it ignores in\n[`Model.unsupported_settings`][pydantic_ai.models.Model.unsupported_settings].\n\nBeing listed means Pydantic AI sends the setting, not that the service honors it: the\nOpenAI-compatible model classes forward whatever the OpenAI schema accepts, and an individual\nprovider behind one of them may ignore a field its own API doesn't define, or reject it. Where we\nknow of such a case it is noted on the entry, but the provider's own API reference is the\nauthority.\n\nAll types must be serializable using Pydantic.",
+      "properties": {
+        "max_tokens": {
+          "title": "Max Tokens",
+          "type": "integer"
+        },
+        "temperature": {
+          "title": "Temperature",
+          "type": "number"
+        },
+        "top_p": {
+          "title": "Top P",
+          "type": "number"
+        },
+        "top_k": {
+          "title": "Top K",
+          "type": "integer"
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Timeout"
+        },
+        "request_timeout": {
+          "title": "Request Timeout",
+          "type": "number"
+        },
+        "first_event_timeout": {
+          "title": "First Event Timeout",
+          "type": "number"
+        },
+        "framing_announcement": {
+          "enum": [
+            "always",
+            "when_needed",
+            "never"
+          ],
+          "title": "Framing Announcement",
+          "type": "string"
+        },
+        "max_retries": {
+          "title": "Max Retries",
+          "type": "integer"
+        },
+        "parallel_tool_calls": {
+          "title": "Parallel Tool Calls",
+          "type": "boolean"
+        },
+        "tool_choice": {
+          "anyOf": [
+            {
+              "enum": [
+                "none",
+                "required",
+                "auto"
+              ],
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "$ref": "#/$defs/ToolOrOutput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Tool Choice"
+        },
+        "seed": {
+          "title": "Seed",
+          "type": "integer"
+        },
+        "presence_penalty": {
+          "title": "Presence Penalty",
+          "type": "number"
+        },
+        "frequency_penalty": {
+          "title": "Frequency Penalty",
+          "type": "number"
+        },
+        "logit_bias": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Logit Bias",
+          "type": "object"
+        },
+        "stop_sequences": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Stop Sequences",
+          "type": "array"
+        },
+        "extra_headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Extra Headers",
+          "type": "object"
+        },
+        "thinking": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "enum": [
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ],
+              "type": "string"
+            }
+          ],
+          "title": "Thinking"
+        },
+        "citations": {
+          "title": "Citations",
+          "type": "boolean"
+        },
+        "cache": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "enum": [
+                "5m",
+                "30m",
+                "1h",
+                "12h"
+              ],
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/CacheConfig"
+            }
+          ],
+          "title": "Cache"
+        },
+        "service_tier": {
+          "enum": [
+            "auto",
+            "default",
+            "flex",
+            "priority"
+          ],
+          "title": "Service Tier",
+          "type": "string"
+        },
+        "extra_body": {
+          "title": "Extra Body"
+        }
+      },
+      "title": "ModelSettings",
+      "type": "object"
+    },
+    "OutputConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for the score and assertion outputs of the LLMJudge evaluator.",
+      "properties": {
+        "evaluation_name": {
+          "title": "Evaluation Name",
+          "type": "string"
+        },
+        "include_reason": {
+          "title": "Include Reason",
+          "type": "boolean"
+        }
+      },
+      "title": "OutputConfig",
+      "type": "object"
+    },
+    "SpanQuery": {
+      "additionalProperties": false,
+      "description": "A serializable query for filtering SpanNodes based on various conditions.\n\nAll fields are optional and combined with AND logic by default.",
+      "properties": {
+        "name_equals": {
+          "title": "Name Equals",
+          "type": "string"
+        },
+        "name_contains": {
+          "title": "Name Contains",
+          "type": "string"
+        },
+        "name_matches_regex": {
+          "title": "Name Matches Regex",
+          "type": "string"
+        },
+        "has_attributes": {
+          "additionalProperties": true,
+          "title": "Has Attributes",
+          "type": "object"
+        },
+        "has_attribute_keys": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Has Attribute Keys",
+          "type": "array"
+        },
+        "has_status": {
+          "enum": [
+            "unset",
+            "ok",
+            "error"
+          ],
+          "title": "Has Status",
+          "type": "string"
+        },
+        "min_duration": {
+          "anyOf": [
+            {
+              "format": "duration",
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Min Duration"
+        },
+        "max_duration": {
+          "anyOf": [
+            {
+              "format": "duration",
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Max Duration"
+        },
+        "not_": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "and_": {
+          "items": {
+            "$ref": "#/$defs/SpanQuery"
+          },
+          "title": "And",
+          "type": "array"
+        },
+        "or_": {
+          "items": {
+            "$ref": "#/$defs/SpanQuery"
+          },
+          "title": "Or",
+          "type": "array"
+        },
+        "min_child_count": {
+          "title": "Min Child Count",
+          "type": "integer"
+        },
+        "max_child_count": {
+          "title": "Max Child Count",
+          "type": "integer"
+        },
+        "some_child_has": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "all_children_have": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "no_child_has": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "stop_recursing_when": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "min_descendant_count": {
+          "title": "Min Descendant Count",
+          "type": "integer"
+        },
+        "max_descendant_count": {
+          "title": "Max Descendant Count",
+          "type": "integer"
+        },
+        "some_descendant_has": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "all_descendants_have": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "no_descendant_has": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "min_depth": {
+          "title": "Min Depth",
+          "type": "integer"
+        },
+        "max_depth": {
+          "title": "Max Depth",
+          "type": "integer"
+        },
+        "some_ancestor_has": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "all_ancestors_have": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "no_ancestor_has": {
+          "$ref": "#/$defs/SpanQuery"
+        }
+      },
+      "title": "SpanQuery",
+      "type": "object"
+    },
+    "StatusInputs": {
+      "additionalProperties": false,
+      "properties": {
+        "umgebung": {
+          "$ref": "#/$defs/StatusSetup"
+        },
+        "eingabe": {
+          "default": "Was steht als Naechstes an?",
+          "title": "Eingabe",
+          "type": "string"
+        }
+      },
+      "required": [
+        "umgebung"
+      ],
+      "title": "StatusInputs",
+      "type": "object"
+    },
+    "StatusOutput": {
+      "properties": {
+        "antwort": {
+          "title": "Antwort",
+          "type": "string"
+        },
+        "naechste": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Naechste"
+        },
+        "fakten": {
+          "title": "Fakten",
+          "type": "string"
+        },
+        "modell": {
+          "default": "",
+          "title": "Modell",
+          "type": "string"
+        }
+      },
+      "required": [
+        "antwort",
+        "naechste",
+        "fakten"
+      ],
+      "title": "StatusOutput",
+      "type": "object"
+    },
+    "StatusSetup": {
+      "additionalProperties": false,
+      "description": "Zeitpunkt der Abfrage und die offenen Aufgaben (Nummern 1, 2, 3 ... in dieser Reihenfolge).",
+      "properties": {
+        "jetzt": {
+          "format": "date-time",
+          "title": "Jetzt",
+          "type": "string"
+        },
+        "aufgaben": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/StatusTaskItem"
+          },
+          "title": "Aufgaben",
+          "type": "array"
+        }
+      },
+      "required": [
+        "jetzt"
+      ],
+      "title": "StatusSetup",
+      "type": "object"
+    },
+    "StatusTaskItem": {
+      "additionalProperties": false,
+      "properties": {
+        "titel": {
+          "title": "Titel",
+          "type": "string"
+        },
+        "faellig": {
+          "format": "date",
+          "title": "Faellig",
+          "type": "string"
+        },
+        "termin": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Termin"
+        }
+      },
+      "required": [
+        "titel",
+        "faellig"
+      ],
+      "title": "StatusTaskItem",
+      "type": "object"
+    },
+    "ToolOrOutput": {
+      "additionalProperties": false,
+      "description": "Restricts function tools while keeping output tools and direct text/image output available.\n\nUse this when you want to control which function tools the model can use\nin an agent run while still allowing all output tools and direct text/image output.\nA plain list instead forces a call to one of the named function and/or output tools.\n\nSee the [Tool Choice guide](../tools-advanced.md#tool-choice) for examples.",
+      "properties": {
+        "function_tools": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Function Tools",
+          "type": "array"
+        }
+      },
+      "required": [
+        "function_tools"
+      ],
+      "title": "ToolOrOutput",
+      "type": "object"
+    },
+    "short_spec_Contains": {
+      "additionalProperties": false,
+      "properties": {
+        "Contains": {
+          "title": "Contains"
+        }
+      },
+      "required": [
+        "Contains"
+      ],
+      "title": "short_spec_Contains",
+      "type": "object"
+    },
+    "short_spec_Equals": {
+      "additionalProperties": false,
+      "properties": {
+        "Equals": {
+          "title": "Equals"
+        }
+      },
+      "required": [
+        "Equals"
+      ],
+      "title": "short_spec_Equals",
+      "type": "object"
+    },
+    "short_spec_EqualsExpected": {
+      "additionalProperties": false,
+      "properties": {
+        "EqualsExpected": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Equalsexpected"
+        }
+      },
+      "title": "short_spec_EqualsExpected",
+      "type": "object"
+    },
+    "short_spec_HasMatchingSpan": {
+      "additionalProperties": false,
+      "properties": {
+        "HasMatchingSpan": {
+          "$ref": "#/$defs/SpanQuery"
+        }
+      },
+      "required": [
+        "HasMatchingSpan"
+      ],
+      "title": "short_spec_HasMatchingSpan",
+      "type": "object"
+    },
+    "short_spec_IsInstance": {
+      "additionalProperties": false,
+      "properties": {
+        "IsInstance": {
+          "title": "Isinstance",
+          "type": "string"
+        }
+      },
+      "required": [
+        "IsInstance"
+      ],
+      "title": "short_spec_IsInstance",
+      "type": "object"
+    },
+    "short_spec_LLMJudge": {
+      "additionalProperties": false,
+      "properties": {
+        "LLMJudge": {
+          "title": "Llmjudge",
+          "type": "string"
+        }
+      },
+      "required": [
+        "LLMJudge"
+      ],
+      "title": "short_spec_LLMJudge",
+      "type": "object"
+    },
+    "short_spec_MaxDuration": {
+      "additionalProperties": false,
+      "properties": {
+        "MaxDuration": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "format": "duration",
+              "type": "string"
+            }
+          ],
+          "title": "Maxduration"
+        }
+      },
+      "required": [
+        "MaxDuration"
+      ],
+      "title": "short_spec_MaxDuration",
+      "type": "object"
+    },
+    "short_spec_MaxModelRequests": {
+      "additionalProperties": false,
+      "properties": {
+        "MaxModelRequests": {
+          "title": "Maxmodelrequests",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "MaxModelRequests"
+      ],
+      "title": "short_spec_MaxModelRequests",
+      "type": "object"
+    },
+    "short_spec_MaxToolCalls": {
+      "additionalProperties": false,
+      "properties": {
+        "MaxToolCalls": {
+          "title": "Maxtoolcalls",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "MaxToolCalls"
+      ],
+      "title": "short_spec_MaxToolCalls",
+      "type": "object"
+    },
+    "short_spec_ToolCorrectness": {
+      "additionalProperties": false,
+      "properties": {
+        "ToolCorrectness": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Toolcorrectness",
+          "type": "array"
+        }
+      },
+      "required": [
+        "ToolCorrectness"
+      ],
+      "title": "short_spec_ToolCorrectness",
+      "type": "object"
+    },
+    "short_spec_TrajectoryMatch": {
+      "additionalProperties": false,
+      "properties": {
+        "TrajectoryMatch": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Trajectorymatch",
+          "type": "array"
+        }
+      },
+      "required": [
+        "TrajectoryMatch"
+      ],
+      "title": "short_spec_TrajectoryMatch",
+      "type": "object"
+    },
+    "spec_ArgumentCorrectness": {
+      "additionalProperties": false,
+      "properties": {
+        "ArgumentCorrectness": {
+          "$ref": "#/$defs/spec_params_ArgumentCorrectness"
+        }
+      },
+      "required": [
+        "ArgumentCorrectness"
+      ],
+      "title": "spec_ArgumentCorrectness",
+      "type": "object"
+    },
+    "spec_ConfusionMatrixEvaluator": {
+      "additionalProperties": false,
+      "properties": {
+        "ConfusionMatrixEvaluator": {
+          "$ref": "#/$defs/spec_params_ConfusionMatrixEvaluator"
+        }
+      },
+      "required": [
+        "ConfusionMatrixEvaluator"
+      ],
+      "title": "spec_ConfusionMatrixEvaluator",
+      "type": "object"
+    },
+    "spec_Contains": {
+      "additionalProperties": false,
+      "properties": {
+        "Contains": {
+          "$ref": "#/$defs/spec_params_Contains"
+        }
+      },
+      "required": [
+        "Contains"
+      ],
+      "title": "spec_Contains",
+      "type": "object"
+    },
+    "spec_Equals": {
+      "additionalProperties": false,
+      "properties": {
+        "Equals": {
+          "$ref": "#/$defs/spec_params_Equals"
+        }
+      },
+      "required": [
+        "Equals"
+      ],
+      "title": "spec_Equals",
+      "type": "object"
+    },
+    "spec_GEval": {
+      "additionalProperties": false,
+      "properties": {
+        "GEval": {
+          "$ref": "#/$defs/spec_params_GEval"
+        }
+      },
+      "required": [
+        "GEval"
+      ],
+      "title": "spec_GEval",
+      "type": "object"
+    },
+    "spec_HasMatchingSpan": {
+      "additionalProperties": false,
+      "properties": {
+        "HasMatchingSpan": {
+          "$ref": "#/$defs/spec_params_HasMatchingSpan"
+        }
+      },
+      "required": [
+        "HasMatchingSpan"
+      ],
+      "title": "spec_HasMatchingSpan",
+      "type": "object"
+    },
+    "spec_IsInstance": {
+      "additionalProperties": false,
+      "properties": {
+        "IsInstance": {
+          "$ref": "#/$defs/spec_params_IsInstance"
+        }
+      },
+      "required": [
+        "IsInstance"
+      ],
+      "title": "spec_IsInstance",
+      "type": "object"
+    },
+    "spec_KolmogorovSmirnovEvaluator": {
+      "additionalProperties": false,
+      "properties": {
+        "KolmogorovSmirnovEvaluator": {
+          "$ref": "#/$defs/spec_params_KolmogorovSmirnovEvaluator"
+        }
+      },
+      "required": [
+        "KolmogorovSmirnovEvaluator"
+      ],
+      "title": "spec_KolmogorovSmirnovEvaluator",
+      "type": "object"
+    },
+    "spec_LLMJudge": {
+      "additionalProperties": false,
+      "properties": {
+        "LLMJudge": {
+          "$ref": "#/$defs/spec_params_LLMJudge"
+        }
+      },
+      "required": [
+        "LLMJudge"
+      ],
+      "title": "spec_LLMJudge",
+      "type": "object"
+    },
+    "spec_MaxModelRequests": {
+      "additionalProperties": false,
+      "properties": {
+        "MaxModelRequests": {
+          "$ref": "#/$defs/spec_params_MaxModelRequests"
+        }
+      },
+      "required": [
+        "MaxModelRequests"
+      ],
+      "title": "spec_MaxModelRequests",
+      "type": "object"
+    },
+    "spec_MaxToolCalls": {
+      "additionalProperties": false,
+      "properties": {
+        "MaxToolCalls": {
+          "$ref": "#/$defs/spec_params_MaxToolCalls"
+        }
+      },
+      "required": [
+        "MaxToolCalls"
+      ],
+      "title": "spec_MaxToolCalls",
+      "type": "object"
+    },
+    "spec_PrecisionRecallEvaluator": {
+      "additionalProperties": false,
+      "properties": {
+        "PrecisionRecallEvaluator": {
+          "$ref": "#/$defs/spec_params_PrecisionRecallEvaluator"
+        }
+      },
+      "required": [
+        "PrecisionRecallEvaluator"
+      ],
+      "title": "spec_PrecisionRecallEvaluator",
+      "type": "object"
+    },
+    "spec_ROCAUCEvaluator": {
+      "additionalProperties": false,
+      "properties": {
+        "ROCAUCEvaluator": {
+          "$ref": "#/$defs/spec_params_ROCAUCEvaluator"
+        }
+      },
+      "required": [
+        "ROCAUCEvaluator"
+      ],
+      "title": "spec_ROCAUCEvaluator",
+      "type": "object"
+    },
+    "spec_Status": {
+      "additionalProperties": false,
+      "properties": {
+        "Status": {
+          "$ref": "#/$defs/spec_params_Status"
+        }
+      },
+      "required": [
+        "Status"
+      ],
+      "title": "spec_Status",
+      "type": "object"
+    },
+    "spec_ToolCorrectness": {
+      "additionalProperties": false,
+      "properties": {
+        "ToolCorrectness": {
+          "$ref": "#/$defs/spec_params_ToolCorrectness"
+        }
+      },
+      "required": [
+        "ToolCorrectness"
+      ],
+      "title": "spec_ToolCorrectness",
+      "type": "object"
+    },
+    "spec_TrajectoryMatch": {
+      "additionalProperties": false,
+      "properties": {
+        "TrajectoryMatch": {
+          "$ref": "#/$defs/spec_params_TrajectoryMatch"
+        }
+      },
+      "required": [
+        "TrajectoryMatch"
+      ],
+      "title": "spec_TrajectoryMatch",
+      "type": "object"
+    },
+    "spec_params_ArgumentCorrectness": {
+      "additionalProperties": false,
+      "properties": {
+        "tool_name": {
+          "title": "Tool Name",
+          "type": "string"
+        },
+        "expected_arguments": {
+          "additionalProperties": true,
+          "title": "Expected Arguments",
+          "type": "object"
+        },
+        "match_mode": {
+          "enum": [
+            "exact",
+            "subset"
+          ],
+          "title": "Match Mode",
+          "type": "string"
+        },
+        "occurrence": {
+          "anyOf": [
+            {
+              "enum": [
+                "first",
+                "last"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Occurrence"
+        },
+        "include_failed": {
+          "title": "Include Failed",
+          "type": "boolean"
+        },
+        "evaluation_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Evaluation Name"
+        }
+      },
+      "required": [
+        "tool_name",
+        "expected_arguments"
+      ],
+      "title": "spec_params_ArgumentCorrectness",
+      "type": "object"
+    },
+    "spec_params_ConfusionMatrixEvaluator": {
+      "additionalProperties": false,
+      "properties": {
+        "predicted_from": {
+          "enum": [
+            "expected_output",
+            "output",
+            "metadata",
+            "labels"
+          ],
+          "title": "Predicted From",
+          "type": "string"
+        },
+        "predicted_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Predicted Key"
+        },
+        "expected_from": {
+          "enum": [
+            "expected_output",
+            "output",
+            "metadata",
+            "labels"
+          ],
+          "title": "Expected From",
+          "type": "string"
+        },
+        "expected_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expected Key"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "title": "spec_params_ConfusionMatrixEvaluator",
+      "type": "object"
+    },
+    "spec_params_Contains": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "title": "Value"
+        },
+        "case_sensitive": {
+          "title": "Case Sensitive",
+          "type": "boolean"
+        },
+        "as_strings": {
+          "title": "As Strings",
+          "type": "boolean"
+        },
+        "evaluation_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Evaluation Name"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "spec_params_Contains",
+      "type": "object"
+    },
+    "spec_params_Equals": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "title": "Value"
+        },
+        "evaluation_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Evaluation Name"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "spec_params_Equals",
+      "type": "object"
+    },
+    "spec_params_GEval": {
+      "additionalProperties": false,
+      "properties": {
+        "criteria": {
+          "title": "Criteria",
+          "type": "string"
+        },
+        "evaluation_steps": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evaluation Steps",
+          "type": "array"
+        },
+        "score_range": {
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Score Range",
+          "type": "array"
+        },
+        "include_input": {
+          "title": "Include Input",
+          "type": "boolean"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/KnownModelName"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model"
+        },
+        "model_settings": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evaluation_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Evaluation Name"
+        }
+      },
+      "required": [
+        "criteria",
+        "evaluation_steps"
+      ],
+      "title": "spec_params_GEval",
+      "type": "object"
+    },
+    "spec_params_HasMatchingSpan": {
+      "additionalProperties": false,
+      "properties": {
+        "query": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "evaluation_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Evaluation Name"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "title": "spec_params_HasMatchingSpan",
+      "type": "object"
+    },
+    "spec_params_IsInstance": {
+      "additionalProperties": false,
+      "properties": {
+        "type_name": {
+          "title": "Type Name",
+          "type": "string"
+        },
+        "evaluation_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Evaluation Name"
+        }
+      },
+      "required": [
+        "type_name"
+      ],
+      "title": "spec_params_IsInstance",
+      "type": "object"
+    },
+    "spec_params_KolmogorovSmirnovEvaluator": {
+      "additionalProperties": false,
+      "properties": {
+        "score_key": {
+          "title": "Score Key",
+          "type": "string"
+        },
+        "positive_from": {
+          "enum": [
+            "expected_output",
+            "assertions",
+            "labels"
+          ],
+          "title": "Positive From",
+          "type": "string"
+        },
+        "positive_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Positive Key"
+        },
+        "score_from": {
+          "enum": [
+            "scores",
+            "metrics"
+          ],
+          "title": "Score From",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "n_thresholds": {
+          "title": "N Thresholds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "score_key",
+        "positive_from"
+      ],
+      "title": "spec_params_KolmogorovSmirnovEvaluator",
+      "type": "object"
+    },
+    "spec_params_LLMJudge": {
+      "additionalProperties": false,
+      "properties": {
+        "rubric": {
+          "title": "Rubric",
+          "type": "string"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/KnownModelName"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model"
+        },
+        "include_input": {
+          "title": "Include Input",
+          "type": "boolean"
+        },
+        "include_expected_output": {
+          "title": "Include Expected Output",
+          "type": "boolean"
+        },
+        "model_settings": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "score": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OutputConfig"
+            },
+            {
+              "const": false,
+              "type": "boolean"
+            }
+          ],
+          "title": "Score"
+        },
+        "assertion": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OutputConfig"
+            },
+            {
+              "const": false,
+              "type": "boolean"
+            }
+          ],
+          "title": "Assertion"
+        }
+      },
+      "required": [
+        "rubric"
+      ],
+      "title": "spec_params_LLMJudge",
+      "type": "object"
+    },
+    "spec_params_MaxModelRequests": {
+      "additionalProperties": false,
+      "properties": {
+        "max_requests": {
+          "title": "Max Requests",
+          "type": "integer"
+        },
+        "evaluation_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Evaluation Name"
+        }
+      },
+      "required": [
+        "max_requests"
+      ],
+      "title": "spec_params_MaxModelRequests",
+      "type": "object"
+    },
+    "spec_params_MaxToolCalls": {
+      "additionalProperties": false,
+      "properties": {
+        "max_calls": {
+          "title": "Max Calls",
+          "type": "integer"
+        },
+        "include_failed": {
+          "title": "Include Failed",
+          "type": "boolean"
+        },
+        "evaluation_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Evaluation Name"
+        }
+      },
+      "required": [
+        "max_calls"
+      ],
+      "title": "spec_params_MaxToolCalls",
+      "type": "object"
+    },
+    "spec_params_PrecisionRecallEvaluator": {
+      "additionalProperties": false,
+      "properties": {
+        "score_key": {
+          "title": "Score Key",
+          "type": "string"
+        },
+        "positive_from": {
+          "enum": [
+            "expected_output",
+            "assertions",
+            "labels"
+          ],
+          "title": "Positive From",
+          "type": "string"
+        },
+        "positive_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Positive Key"
+        },
+        "score_from": {
+          "enum": [
+            "scores",
+            "metrics"
+          ],
+          "title": "Score From",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "n_thresholds": {
+          "title": "N Thresholds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "score_key",
+        "positive_from"
+      ],
+      "title": "spec_params_PrecisionRecallEvaluator",
+      "type": "object"
+    },
+    "spec_params_ROCAUCEvaluator": {
+      "additionalProperties": false,
+      "properties": {
+        "score_key": {
+          "title": "Score Key",
+          "type": "string"
+        },
+        "positive_from": {
+          "enum": [
+            "expected_output",
+            "assertions",
+            "labels"
+          ],
+          "title": "Positive From",
+          "type": "string"
+        },
+        "positive_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Positive Key"
+        },
+        "score_from": {
+          "enum": [
+            "scores",
+            "metrics"
+          ],
+          "title": "Score From",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "n_thresholds": {
+          "title": "N Thresholds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "score_key",
+        "positive_from"
+      ],
+      "title": "spec_params_ROCAUCEvaluator",
+      "type": "object"
+    },
+    "spec_params_Status": {
+      "additionalProperties": false,
+      "properties": {
+        "naechste": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Naechste"
+        },
+        "nennt": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Nennt",
+          "type": "array"
+        },
+        "nennt_nicht": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Nennt Nicht",
+          "type": "array"
+        },
+        "verboten": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Verboten",
+          "type": "array"
+        },
+        "hoechstens_zeichen": {
+          "title": "Hoechstens Zeichen",
+          "type": "integer"
+        },
+        "zahlen_aus_eingabe": {
+          "title": "Zahlen Aus Eingabe",
+          "type": "boolean"
+        }
+      },
+      "title": "spec_params_Status",
+      "type": "object"
+    },
+    "spec_params_ToolCorrectness": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_tools": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Expected Tools",
+          "type": "array"
+        },
+        "allow_extra": {
+          "title": "Allow Extra",
+          "type": "boolean"
+        },
+        "include_failed": {
+          "title": "Include Failed",
+          "type": "boolean"
+        },
+        "evaluation_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Evaluation Name"
+        }
+      },
+      "required": [
+        "expected_tools"
+      ],
+      "title": "spec_params_ToolCorrectness",
+      "type": "object"
+    },
+    "spec_params_TrajectoryMatch": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_trajectory": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Expected Trajectory",
+          "type": "array"
+        },
+        "order": {
+          "enum": [
+            "exact",
+            "in_order",
+            "any_order"
+          ],
+          "title": "Order",
+          "type": "string"
+        },
+        "include_failed": {
+          "title": "Include Failed",
+          "type": "boolean"
+        },
+        "evaluation_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Evaluation Name"
+        }
+      },
+      "required": [
+        "expected_trajectory"
+      ],
+      "title": "spec_params_TrajectoryMatch",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Name"
+    },
+    "cases": {
+      "items": {
+        "$ref": "#/$defs/Case"
+      },
+      "title": "Cases",
+      "type": "array"
+    },
+    "evaluators": {
+      "default": [],
+      "items": {
+        "anyOf": [
+          {
+            "const": "Status",
+            "type": "string"
+          },
+          {
+            "$ref": "#/$defs/spec_Status"
+          },
+          {
+            "$ref": "#/$defs/short_spec_Equals"
+          },
+          {
+            "$ref": "#/$defs/spec_Equals"
+          },
+          {
+            "const": "EqualsExpected",
+            "type": "string"
+          },
+          {
+            "$ref": "#/$defs/short_spec_EqualsExpected"
+          },
+          {
+            "$ref": "#/$defs/short_spec_Contains"
+          },
+          {
+            "$ref": "#/$defs/spec_Contains"
+          },
+          {
+            "$ref": "#/$defs/short_spec_IsInstance"
+          },
+          {
+            "$ref": "#/$defs/spec_IsInstance"
+          },
+          {
+            "$ref": "#/$defs/short_spec_MaxDuration"
+          },
+          {
+            "$ref": "#/$defs/short_spec_LLMJudge"
+          },
+          {
+            "$ref": "#/$defs/spec_LLMJudge"
+          },
+          {
+            "$ref": "#/$defs/short_spec_HasMatchingSpan"
+          },
+          {
+            "$ref": "#/$defs/spec_HasMatchingSpan"
+          },
+          {
+            "$ref": "#/$defs/short_spec_ToolCorrectness"
+          },
+          {
+            "$ref": "#/$defs/spec_ToolCorrectness"
+          },
+          {
+            "$ref": "#/$defs/short_spec_TrajectoryMatch"
+          },
+          {
+            "$ref": "#/$defs/spec_TrajectoryMatch"
+          },
+          {
+            "$ref": "#/$defs/spec_ArgumentCorrectness"
+          },
+          {
+            "$ref": "#/$defs/short_spec_MaxToolCalls"
+          },
+          {
+            "$ref": "#/$defs/spec_MaxToolCalls"
+          },
+          {
+            "$ref": "#/$defs/short_spec_MaxModelRequests"
+          },
+          {
+            "$ref": "#/$defs/spec_MaxModelRequests"
+          },
+          {
+            "$ref": "#/$defs/spec_GEval"
+          }
+        ]
+      },
+      "title": "Evaluators",
+      "type": "array"
+    },
+    "report_evaluators": {
+      "default": [],
+      "items": {
+        "anyOf": [
+          {
+            "const": "ConfusionMatrixEvaluator",
+            "type": "string"
+          },
+          {
+            "$ref": "#/$defs/spec_ConfusionMatrixEvaluator"
+          },
+          {
+            "$ref": "#/$defs/spec_KolmogorovSmirnovEvaluator"
+          },
+          {
+            "$ref": "#/$defs/spec_PrecisionRecallEvaluator"
+          },
+          {
+            "$ref": "#/$defs/spec_ROCAUCEvaluator"
+          }
+        ]
+      },
+      "title": "Report Evaluators",
+      "type": "array"
+    },
+    "$schema": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "cases"
+  ],
+  "title": "Dataset",
+  "type": "object"
+}

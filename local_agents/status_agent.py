@@ -129,9 +129,16 @@ def approved_at(store: Store) -> datetime | None:
     return None
 
 
-def status_heading(now: datetime, approved: datetime | None) -> str:
+NO_PLAN = object()
+
+
+def status_heading(now: datetime, approved: datetime | None | object = NO_PLAN) -> str:
+    """Zeitpunkt der Abfrage; mit ``approved`` (auch None) samt Stand der Freigabe."""
+    stand = f"Stand {WEEKDAYS[now.weekday()]} {now:%d.%m.%Y, %H:%M} Uhr"
+    if approved is NO_PLAN:
+        return stand
     plan = f"Plan abgesegnet am {approved:%d.%m. %H:%M}" if approved else "Plan noch nicht abgesegnet"
-    return f"Stand {WEEKDAYS[now.weekday()]} {now:%d.%m.%Y, %H:%M} Uhr ({plan})"
+    return f"{stand} ({plan})"
 
 
 def _label(profile: Profile, context: str) -> str:
@@ -188,8 +195,12 @@ def instructions(ctx: RunContext[StatusDeps]) -> str:
         "Sage in ein bis zwei kurzen deutschen Saetzen, welche Aufgabe das ist und "
         "warum sie jetzt dran ist (Faelligkeit, Zeit bis zum Termin). Die Aufgabe "
         "erledigt das Agentensystem, nicht der Nutzer; schreibe nie 'du musst'. "
-        "Nenne keine anderen Aufgaben. Erfinde nichts.\n"
-        f"{heading}\n{facts}"
+        "Nenne keine anderen Aufgaben. Erfinde nichts. Zeitangaben uebernimmst du "
+        "woertlich aus den Angaben unten (etwa 'Termin in 1 Tag 1 Std'); rechne sie "
+        "nicht in Stunden oder Minuten um.\n"
+        # Ob der Plan abgesegnet ist, steht nur in der Ueberschrift fuer den Nutzer:
+        # Das Modell leitete daraus Behauptungen ab ("erst nach Freigabe").
+        f"{status_heading(deps.now)}\n{facts}"
     )
 
 
