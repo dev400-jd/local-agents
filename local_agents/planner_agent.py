@@ -403,7 +403,7 @@ def main(argv: list[str]) -> int:
     try:
         profile = load_profile()
         deps = PlannerDeps(today=date.today(), store=Store(), profile=profile)
-        model = ollama_model()
+        model = ollama_model(profile.model_for(AGENT_NAME))
         output = run(question, deps, model)
     except (CalendarAccessError, ProfileError) as exc:
         print(exc, file=sys.stderr)

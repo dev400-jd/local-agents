@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-from local_agents.agent import MODEL_SETTINGS, ollama_model
+from local_agents.agent import MODEL_SETTINGS, ollama_model, structured
 from local_agents.profile import Profile, ProfileError, load_profile
 
 AGENT_NAME = "stories"
@@ -160,7 +160,7 @@ class OutlineDeps:
 
 
 outline_agent = Agent(
-    deps_type=OutlineDeps, output_type=OutlineAnalysis, model_settings=MODEL_SETTINGS, retries=2
+    deps_type=OutlineDeps, output_type=structured(OutlineAnalysis), model_settings=MODEL_SETTINGS, retries=2
 )
 
 

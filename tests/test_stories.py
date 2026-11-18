@@ -11,6 +11,7 @@ from pydantic_ai import models
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
+from local_agents.testing import structured_reply
 from local_agents import stories
 from local_agents.profile import Context, Profile
 from local_agents.stories import (
@@ -224,7 +225,7 @@ def model_marking(*numbers: int, seen: list | None = None) -> FunctionModel:
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if seen is not None:
             seen.append(info.instructions)
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"stories": list(numbers)})])
+        return structured_reply(info, {"stories": list(numbers)})
 
     return FunctionModel(respond)
 

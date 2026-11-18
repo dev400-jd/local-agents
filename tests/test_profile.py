@@ -168,5 +168,13 @@ class TestLoadProfile(unittest.TestCase):
             load_profile(self.write("[person"))
 
 
+class TestModels(unittest.TestCase):
+    def test_agent_entry_wins_over_default_and_default_over_nothing(self) -> None:
+        profile = Profile(models={"default": "gross", "status": "klein"})
+        self.assertEqual(profile.model_for("status"), "klein")
+        self.assertEqual(profile.model_for("termin"), "gross")
+        self.assertEqual(Profile().model_for("termin"), "")
+
+
 if __name__ == "__main__":
     unittest.main()

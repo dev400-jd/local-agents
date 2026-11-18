@@ -38,7 +38,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-from local_agents.agent import MODEL_SETTINGS, ollama_model
+from local_agents.agent import MODEL_SETTINGS, ollama_model, structured
 from local_agents.dates import mentioned_dates
 from local_agents.holidays import WEEKDAYS, is_public_holiday
 from local_agents.meeting_types import keyword_hint
@@ -176,7 +176,7 @@ class RemarkDeps:
 
 
 remark_agent = Agent(
-    deps_type=RemarkDeps, output_type=Remarks, model_settings=MODEL_SETTINGS, retries=2
+    deps_type=RemarkDeps, output_type=structured(Remarks), model_settings=MODEL_SETTINGS, retries=2
 )
 
 

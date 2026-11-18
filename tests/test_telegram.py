@@ -11,6 +11,7 @@ from pydantic_ai import models
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
+from local_agents.testing import structured_reply
 from local_agents import telegram_bot
 from local_agents.profile import Context, Profile, ProfileError, load_profile
 from local_agents.store import Store
@@ -49,7 +50,7 @@ def answering(*outputs: dict) -> FunctionModel:
     replies = list(outputs)
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, replies.pop(0))])
+        return structured_reply(info, replies.pop(0))
 
     return FunctionModel(respond)
 

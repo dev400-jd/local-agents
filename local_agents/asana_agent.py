@@ -124,7 +124,7 @@ def main(argv: list[str]) -> int:
             fetch=lambda since: fetch_mentions(since, transport),
             profile=load_profile(),
         )
-        output = answer_with_notes(asana_agent, question, deps, ollama_model())
+        output = answer_with_notes(asana_agent, question, deps, ollama_model(deps.profile.model_for("asana")))
     except (AsanaAccessError, ProfileError) as exc:
         print(exc, file=sys.stderr)
         return 1

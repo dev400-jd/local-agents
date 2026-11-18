@@ -24,6 +24,8 @@ zu arbeiten ist, steht in [docs/stand-und-fahrplan.md](docs/stand-und-fahrplan.m
 | Kalenderabgleich | `local_agents/sync.py` | bringt die Datenbank vor jedem Lesen auf den Stand des Kalenders |
 | Kalenderwache | `local_agents/watch.py` | Hintergrunddienst: gleicht ab, sobald sich der Kalender ändert |
 | Messung | `local_agents/evals.py` | lässt Agenten gegen feste Fälle mit bekannter richtiger Antwort laufen |
+| Datumsangaben | `local_agents/dates.py` | erkennt „morgen", Wochentage und Daten in deutschem Freitext |
+| Testhilfen | `local_agents/testing.py` | Antworten des geskripteten Modells für beide Ausgabearten |
 | Kurzfassung | `local_agents/briefing.py` | Überblick über die offenen Aufgaben in wenigen Sätzen, zum Vorlesen |
 | Sprachausgabe | `local_agents/voice.py` | liest Text mit dem lokalen Sprachmodell Piper vor |
 | Spracheingabe | `local_agents/listen.py` | nimmt eine gesprochene Antwort auf und erkennt sie lokal mit Whisper |
@@ -913,25 +915,49 @@ Sprachnachrichten versteht er nicht. Token zurückziehen: bei `@BotFather` mit
 
 ### Modell je Agent
 
-Jeder Agent kann ein eigenes Ollama-Modell bekommen, über den Agentennamen im
-Profil; ohne Eintrag gilt das Standardmodell:
+Das Modell steht im Profil. `default` gilt für alle Agenten, ein Agentenname
+nur für diesen einen; ohne Eintrag gilt `gpt-oss:20b` (oder die
+Umgebungsvariable `LOCAL_AGENTS_MODEL`):
 
 ```toml
 [models]
-status = "qwen3.5:9b-q8_0"   # Agentennamen: status, termin, stories, scrum_master
+default = "qwen3.8:27b-mlx"
+# status = "gpt-oss:20b"   # Agentennamen: planner, rueckmeldung, status, termin,
+#                          # stories, scrum_master, kalender, asana
 ```
 
-Gemessen am Status-Agenten mit 15 offenen Aufgaben (2026-11-15, je 2 Läufe):
+Die Rückmeldung auf den Plan läuft im Planungs-Agenten und nutzt dessen
+Modell (`planner`). Zwei große Modelle passen nicht gleichzeitig in den
+Speicher: Bekommen Agenten, die nacheinander laufen, verschiedene Modelle,
+lädt Ollama bei jedem Wechsel neu.
+
+Gemessen auf einem Rechner mit 24 GB RAM (2026-11-18), Fälle aus `evals/`, je
+fünf Läufe:
+
+| | `gpt-oss:20b` | `qwen3.8:27b-mlx` |
+|---|---|---|
+| Scrum Master | 73 bis 79 von 80 Läufen | 80 von 80 |
+| Rückmeldung auf den Plan | 56 bis 57 von 60 Läufen | 60 von 60 |
+| Dauer je Modellaufruf in der Messung | 1 bis 3 s | 5 bis 20 s |
+| Status-Agent, ein Lauf | 3 bis 8 s | 16 s |
+| Status- und Termin-Agent (`orchestrator --neu`), ein Lauf | nicht gemessen | 98 s |
+| Speicher geladen | 12 GB | 21 bis 23 GB |
+
+Qwen bestand auch die Fälle, an denen `gpt-oss:20b` regelmäßig scheitert
+(Bitte im Text, zwei Stories in einem Satz, beide Aufgaben zu einem Termin).
+Der Preis ist die Dauer und der Speicher: Bei 24 GB RAM bleibt neben dem
+Modell kaum Platz. Ein erster Messversuch mit weiteren offenen Programmen
+blieb stecken (55 Aufrufe in 45 Minuten, Auslagerungsspeicher voll); mit
+geschlossenen Programmen lief die Messung in 25 Minuten durch.
+
+Ältere Messung am Status-Agenten mit 15 offenen Aufgaben (2026-11-15, je 2
+Läufe):
 
 | Modell | Dauer | Antwort |
 |---|---|---|
-| `gpt-oss:20b`, Reasoning niedrig (Standard) | 3–8 s | sachlich richtig |
+| `gpt-oss:20b`, Reasoning niedrig | 3–8 s | sachlich richtig |
 | `qwen3.5:9b-q8_0` mit Nachdenken | 141–147 s | sachlich richtig, gutes Deutsch |
 | `qwen3.5:9b-q8_0` ohne Nachdenken | 3–6 s | erfundene Angabe („in weniger als 6 Minuten"), Grammatikfehler |
-
-Deshalb läuft der Status-Agent vorerst mit dem Standardmodell. Die Einstellung
-„Reasoning niedrig" verkürzt das Nachdenken bei Qwen nicht; abschalten lässt es
-sich nur ganz, und das ist im Code noch nicht je Agent einstellbar.
 
 ## Profil: gemeinsames Gedächtnis der Agenten
 
@@ -1120,42 +1146,62 @@ gegen feste Fälle laufen, bei denen die richtige Antwort bekannt ist. Weil das
 Modell nicht jedes Mal gleich antwortet, läuft jeder Fall mehrfach, und das
 Ergebnis ist eine Quote.
 
+Das Programm baut auf [pydantic-evals](https://ai.pydantic.dev/evals/) auf
+(Dateiformat der Fälle, wiederholtes Ausführen, Fortschrittsanzeige). Es läuft
+ohne Cloud-Dienst. Installation: `.venv/bin/pip install -e '.[evals]'`.
+
 ```bash
 .venv/bin/python -m local_agents.evals                    # alle Agenten mit Fällen
 .venv/bin/python -m local_agents.evals scrum_master       # nur dieser Agent
-.venv/bin/python -m local_agents.evals --laeufe 5         # jeden Fall fünfmal (Standard 3), zeigt Schwankungen besser
+.venv/bin/python -m local_agents.evals --laeufe 10        # jeden Fall zehnmal (Standard 5)
 .venv/bin/python -m local_agents.evals --modell qwen3.5:9b-q8_0
 .venv/bin/python -m local_agents.evals --fall Daily       # nur Fälle mit "Daily" im Namen
 .venv/bin/python -m local_agents.evals --liste            # Fälle zeigen, nichts ausführen
+.venv/bin/python -m local_agents.evals --schema           # Schema-Dateien neu schreiben
 ```
 
-Ollama muss laufen. Ein Messlauf beider Agenten (28 Fälle, je dreimal) dauert
-gut zwei Minuten. Das Programm endet mit 1, wenn ein Fall nicht in jedem Lauf besteht.
+Ollama muss laufen. Ein Messlauf beider Agenten (28 Fälle, je fünfmal) dauert
+mit `gpt-oss:20b` knapp fünf Minuten; im Terminal zeigt ein Balken den
+Fortschritt. Ein Modellaufruf, der länger als zwei Minuten hängt, zählt als
+gescheiterter Lauf. Das Programm endet mit 1, wenn ein Fall nicht in jedem
+Lauf besteht.
 
 ```text
-scrum_master · gpt-oss:20b · 3 Läufe je Fall · Stand a407750
-  ✓ 3/3    2.4 s  Kürzel und schlichter Text
-  ~ 2/3    3.1 s  Daily an einem Wochentag
-        Lauf 2: IM-2: Daily 2026-11-19 erwartet, 2026-11-17 vermerkt
-Fälle immer bestanden: 15 von 16 · Läufe bestanden: 47 von 48 · Dauer 2:10 min
-Gegenüber dem letzten Lauf (15.11.2026 10:00, Stand 0e8cf6a):
-  schlechter: Daily an einem Wochentag (3/3 → 2/3)
+scrum_master · gpt-oss:20b · Ausgabe tool · 5 Läufe je Fall · Stand 96a63e7
+  ✓ 5/5    2.0 s  Kürzel und schlichter Text
+  ~ 3/5    3.4 s  Bitte weglassen, Inhalt behalten
+        Lauf 2: IM-1: „schreib bitte“ gehört nicht in den Text
+          Modell: {"remarks":[{"text":"Schreib bitte rein, dass IM-1 ...","story":"IM-1","daily":null}]}
+Fälle immer bestanden: 14 von 16 · Läufe bestanden: 75 von 80 · Dauer 3:04 min
+Gegenüber dem letzten Lauf (18.11.2026 10:42, Stand 96a63e7):
+  schlechter: Bitte weglassen, Inhalt behalten (4/5 → 3/5)
 ```
 
-`✓` heißt in jedem Lauf bestanden, `~` manchmal, `✗` nie. Ein Fall mit `~` ist
-die wichtigste Zeile: Dort ist das Modell unzuverlässig.
+`✓` heißt in jedem Lauf bestanden, `~` manchmal, `✗` nie. Bei einem
+gescheiterten Lauf steht unter „Modell" wörtlich, was das Modell geantwortet
+hat. Daran ist zu sehen, ob das Modell oder der Code danach den Fehler macht.
 
 Gemessen wird der ganze Weg einer Eingabe, also Modell und Code zusammen.
 Geprüft wird mit Code am Endzustand, nicht mit einem zweiten Modell:
 
-| Agent | Geprüft wird |
-|---|---|
-| `scrum_master` | Zahl der Bemerkungen, zugeordnete Story, Daily-Datum, Angaben im Text, zurückgenommene Vermerke |
-| `rueckmeldung` | herausgenommene Aufgaben (genau diese), neue Aufgaben mit Fälligkeit, Rückfrage bei Unklarem |
+| Agent | Prüfer | Geprüft wird |
+|---|---|---|
+| `scrum_master` | `Bemerkungen` | Zahl der Bemerkungen, zugeordnete Story, Daily-Datum, Angaben im Text, zurückgenommene Vermerke |
+| `rueckmeldung` | `Aufgaben` | herausgenommene Aufgaben (genau diese), neue Aufgaben mit Fälligkeit, Rückfrage bei Unklarem |
+
+### Schwankung beachten
+
+Zwei Messläufe mit demselben Modell und demselben Code unterscheiden sich um
+einige Läufe (beim Scrum Master gemessen: 75 und 79 von 80). Ein Unterschied
+in dieser Größe zwischen zwei Einstellungen sagt deshalb nichts. Wer zwei
+Modelle oder Einstellungen vergleichen will, misst jede mehrmals oder mit
+`--laeufe 10` und mehr.
 
 ### Fälle
 
-Fälle stehen als TOML-Dateien an zwei Orten, beide werden gelesen:
+Fälle stehen als YAML-Dateien im Format von pydantic-evals an zwei Orten.
+Beide werden gelesen; der Dateiname beginnt mit dem Namen des Agenten
+(`scrum_master.yaml`, `scrum_master-alltag.yaml`):
 
 - `evals/` im Repo: erfundene Fälle.
 - `~/.local/share/local-agents/evals/` (anderer Ort: `LOCAL_AGENTS_EVALS`):
@@ -1166,61 +1212,91 @@ Geht im Alltag etwas schief, wird daraus zuerst ein Fall und dann die
 Korrektur. So wächst die Sammlung an den Stellen, an denen das Modell wirklich
 Fehler macht.
 
-Eine Datei gilt für einen Agenten und ein festes „heute". Für den Scrum Master:
+Die Umgebung eines Falls (das „heute" und die Stories oder Aufgaben) steht
+beim ersten Fall einer Datei und wird mit einem YAML-Anker wiederverwendet.
+Für den Scrum Master:
 
-```toml
-agent = "scrum_master"
-heute = 2026-11-16                 # Wochentage und "morgen" beziehen sich darauf
-
-[[story]]                          # die Stories, die der Agent kennt
-kuerzel = "QG-3"
-titel = "Freigabe der Schnittstelle"
-feature = "Bestellimport"
-# statt [[story]] geht auch ein Ordner: stories_dir = "~/pfad/zu/stories"
-
-[[fall]]
-name = "Datum bleibt im Text, kein Daily erfunden"
-vorher = []                        # frühere Antworten derselben Runde, ungeprüft
-eingabe = "Bei QG-3 warten wir bis 24.11. auf die Freigabe"
-entfernt = 0                       # so viele Vermerke sind danach zurückgenommen
-[[fall.erwartet]]                  # je erwarteter Bemerkung ein Block
-story = "QG-3"                     # Kürzel, sonst Name; "" = keiner Story zugeordnet
-daily = false                      # false = ohne Daily-Bezug, sonst ein Datum
-enthaelt = ["24.11."]              # muss im Text stehen
-enthaelt_nicht = []                # darf nicht im Text stehen
+```yaml
+# yaml-language-server: $schema=scrum_master_schema.json
+name: scrum_master
+cases:
+- name: "Datum bleibt im Text, kein Daily erfunden"
+  inputs:
+    umgebung: &umgebung
+      heute: 2026-11-16            # Wochentage und "morgen" beziehen sich darauf
+      stories:                     # die Stories, die der Agent kennt
+      - {kuerzel: "QG-3", titel: "Freigabe der Schnittstelle", feature: "Bestellimport"}
+      # statt stories geht auch ein Ordner: stories_dir: "~/pfad/zu/stories"
+    vorher: []                     # frühere Antworten derselben Runde, ungeprüft
+    eingabe: "Bei QG-3 warten wir bis 24.11. auf die Freigabe"
+  evaluators:
+  - Bemerkungen:
+      entfernt: 0                  # so viele Vermerke sind danach zurückgenommen
+      erwartet:                    # je erwarteter Bemerkung ein Eintrag
+      - story: "QG-3"              # Kürzel, sonst Name; "" = keiner Story zugeordnet
+        daily: false               # false = ohne Daily-Bezug, sonst ein Datum
+        enthaelt: ["24.11."]       # muss im Text stehen
+        enthaelt_nicht: []         # darf nicht im Text stehen
+- name: "Nichts Neues vermerkt nichts"
+  inputs:
+    umgebung: *umgebung            # dieselbe Umgebung wie oben
+    eingabe: "nein, nichts Neues"
+  evaluators:
+  - Bemerkungen                    # ohne Angaben: keine Bemerkung, nichts entfernt
 ```
 
 Für die Rückmeldung auf den Plan:
 
-```toml
-agent = "rueckmeldung"
-heute = 2026-11-20
-
-[[aufgabe]]                        # bekommt die Nummer 1, die nächste 2 usw.
-titel = "Vorbereitung: Daily (Mo 23.11. 09:00)"
-faellig = 2026-11-22
-
-[[fall]]
-name = "Herausnehmen und ergänzen in einer Antwort"
-eingabe = "die Vorbereitung fürs Daily raus, dafür bis zum 25. die Demo aufsetzen"
-raus = [1]                         # genau diese Nummern sind danach abgelehnt
-unklar = false                     # ob der Agent etwas nicht verstanden meldet
-[[fall.neu]]                       # je erwarteter neuer Aufgabe ein Block
-titel_enthaelt = "Demo"
-faellig = 2026-11-25
+```yaml
+# yaml-language-server: $schema=rueckmeldung_schema.json
+name: rueckmeldung
+cases:
+- name: "Herausnehmen und ergänzen in einer Antwort"
+  inputs:
+    umgebung: &umgebung
+      heute: 2026-11-20
+      aufgaben:                    # bekommen die Nummern 1, 2, 3 ... in dieser Reihenfolge
+      - {titel: "Vorbereitung: Daily (Mo 23.11. 09:00)", faellig: 2026-11-22}
+    eingabe: "die Vorbereitung fürs Daily raus, dafür bis zum 25. die Demo aufsetzen"
+  evaluators:
+  - Aufgaben:
+      raus: [1]                    # genau diese Nummern sind danach abgelehnt
+      unklar: false                # ob der Agent etwas nicht verstanden meldet
+      neu:                         # je erwarteter neuer Aufgabe ein Eintrag
+      - {titel_enthaelt: "Demo", faellig: 2026-11-25}
 ```
 
-Felder, die fehlen, werden nicht geprüft; die Zahl der Bemerkungen, `raus` und
-die Zahl neuer Aufgaben werden immer geprüft.
+Angaben, die fehlen, werden nicht geprüft; die Zahl der Bemerkungen, `raus` und
+die Zahl neuer Aufgaben werden immer geprüft. Unbekannte Schlüssel (etwa ein
+Tippfehler wie `dayli`) sind ein Fehler beim Laden. Die Schema-Dateien
+`evals/*_schema.json` lassen den Editor die Falldateien prüfen; nach einer
+Änderung an Eingaben oder Prüfern schreibt `--schema` sie neu (ein Test
+erinnert daran).
 
 ### Ergebnisse und Vergleich
 
 Jeder vollständige Messlauf wird als Zeile in
 `~/.local/share/local-agents/evals/ergebnisse.jsonl` festgehalten: Zeit, Agent,
-Modell, Code-Stand (Commit, mit `+` bei ungespeicherten Änderungen) und je Fall
-die bestandenen Läufe. Die Ausgabe vergleicht mit dem letzten Lauf desselben
-Agenten mit demselben Modell. Läufe mit `--fall` werden nicht festgehalten,
-weil sie nur einen Teil der Fälle messen.
+Modell, Ausgabeart, Code-Stand (Commit, mit `+` bei ungespeicherten Änderungen)
+und je Fall die bestandenen Läufe. Die Ausgabe vergleicht mit dem letzten Lauf
+desselben Agenten mit demselben Modell und derselben Ausgabeart. Läufe mit
+`--fall` werden nicht festgehalten, weil sie nur einen Teil der Fälle messen.
+Den Verlauf führt das Programm selbst; pydantic-evals vergleicht Berichte nur
+innerhalb eines Programmlaufs.
+
+### Ausgabeart
+
+Agenten mit festem Antwortschema (Scrum Master, Rückmeldung, Termin-Agent,
+Story-Erkennung) können ihre Antwort auf zwei Arten abgeben:
+
+| `LOCAL_AGENTS_OUTPUT` | Bedeutung |
+|---|---|
+| `tool` (Standard) | Das Modell ruft ein Ausgabe-Werkzeug auf. |
+| `native` | Ollama erzwingt das Schema beim Erzeugen der Antwort. |
+
+Gemessen mit `gpt-oss:20b` gibt es keinen Unterschied, der über die Schwankung
+hinausgeht (Zahlen unter „Stand"). Zum Nachmessen:
+`LOCAL_AGENTS_OUTPUT=native .venv/bin/python -m local_agents.evals`.
 
 Grenzen: Mit einem guten Dutzend Fällen je Agent zeigt die Messung Rückschritte
 und grobe Unterschiede zwischen Modellen, keine feinen. Für Status-Agent,
@@ -1299,6 +1375,18 @@ Termin-Agent und Story-Erkennung gibt es noch keine Fälle.
     rein, dass" blieb in 4 von 5 Läufen im Text, die Zuordnung über ein
     Stichwort aus dem Namen gelang in 3 von 5, der Satz mit zwei Stories in
     4 von 5. Noch nicht behoben.
+- Ausgabeart `tool` gegen `native` mit `gpt-oss:20b`, je fünf Läufe
+  (2026-11-18): Scrum Master 73 von 80 (`tool`) gegen 79 und 75 von 80
+  (`native`, zwei Messläufe); Rückmeldung 57 von 60 gegen 57 und 56 von 60.
+  Der Abstand zwischen den beiden `native`-Läufen ist so groß wie der zu
+  `tool`, also kein belegter Unterschied. Der Standard bleibt `tool`.
+- `qwen3.8:27b-mlx` (2026-11-18): besteht alle 28 Fälle in allen fünf Läufen
+  (140 von 140), braucht dafür 25 statt knapp 5 Minuten. Zahlen und
+  Speicherbedarf: Abschnitt [Modell je Agent](#modell-je-agent).
+- Offene Schwächen mit `gpt-oss:20b` laut Messung (2026-11-18): Der Scrum Master lässt die Bitte
+  („schreib bitte rein, dass") oft im Text und teilt einen Satz zu zwei
+  Stories nicht immer auf; die Rückmeldung nimmt bei „beide Aufgaben zur
+  Teamrunde" öfter nur eine heraus.
 - Noch offen: Agenten, die Aufgaben selbst erledigen; vom Nutzer ergänzte
   Aufgaben (`manuell`) erscheinen in `tasks` und beim Status-Agenten, aber
   nicht in der Planliste und der Kurzfassung des Planungs-Agenten.

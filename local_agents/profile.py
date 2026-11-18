@@ -99,8 +99,9 @@ class Profile:
     telegram_ask_at: tuple[str, ...] = ()  # Uhrzeiten "HH:MM", an denen der Bot nachfragt
 
     def model_for(self, agent: str) -> str:
-        """Modellname fuer den Agenten, leer fuer das Standardmodell."""
-        return self.models.get(agent, "")
+        """Modellname fuer den Agenten: sein eigener Eintrag, sonst ``default`` aus
+        ``[models]``; leer fuer das Standardmodell aus dem Code."""
+        return self.models.get(agent) or self.models.get("default", "")
 
     def context_ids(self) -> list[str]:
         """Alle Werte, die ``classify`` liefern kann."""

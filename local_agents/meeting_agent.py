@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-from local_agents.agent import MODEL_SETTINGS
+from local_agents.agent import MODEL_SETTINGS, structured
 from local_agents.holidays import WEEKDAYS
 from local_agents.meeting_types import BY_ID, MEETING_TYPES, OTHER_TYPE, keyword_hint
 from local_agents.profile import CUSTOMER, Profile
@@ -48,7 +48,7 @@ class MeetingDeps:
 # Rolle (9-20 s statt 2-10 s je Termin, gemessen 2026-11-15).
 meeting_agent = Agent(
     deps_type=MeetingDeps,
-    output_type=MeetingAnalysis,
+    output_type=structured(MeetingAnalysis),
     model_settings={**MODEL_SETTINGS, "max_tokens": 4096, "openai_reasoning_effort": "medium"},
     retries=2,
 )

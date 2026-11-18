@@ -1,0 +1,142 @@
+# yaml-language-server: $schema=scrum_master_schema.json
+# Erfundene Fälle für den Scrum Master. Aufbau: README, Abschnitt "Messen".
+# Die Umgebung (Datum und Stories) steht beim ersten Fall und wird danach mit
+# *umgebung wiederverwendet.
+name: scrum_master
+cases:
+- name: "Kürzel und schlichter Text"
+  inputs:
+    umgebung: &umgebung
+      heute: 2026-11-16   # ein Montag
+      stories:
+      - {kuerzel: "QG-1", titel: "Prüfregeln für Bestellungen", feature: "Bestellimport"}
+      - {kuerzel: "QG-2", titel: "Testdaten für den Import", feature: "Bestellimport"}
+      - {kuerzel: "QG-3", titel: "Freigabe der Schnittstelle zum Shop", feature: "Bestellimport"}
+      - {kuerzel: "QG-4", titel: "Abnahme durch den Fachbereich", feature: "Bestellimport"}
+      - {kuerzel: "ZI-0a", titel: "Zugang zur Testumgebung", feature: "Infrastruktur"}
+      - {kuerzel: "IM-1", titel: "Umzug auf den neuen Server", feature: "Infrastruktur"}
+      - {kuerzel: "IM-2", titel: "Dateiformat für den Mahnlauf", feature: "Infrastruktur"}
+    eingabe: "QG-1 ist fertig getestet"
+  evaluators:
+  - Bemerkungen:
+      erwartet:
+      - {story: "QG-1", daily: false, enthaelt: ["getestet"]}
+- name: "Kürzel kleingeschrieben"
+  inputs:
+    umgebung: *umgebung
+    eingabe: "qg-3 ist blockiert, uns fehlen die Zugangsdaten"
+  evaluators:
+  - Bemerkungen:
+      erwartet:
+      - {story: "QG-3", daily: false, enthaelt: ["Zugangsdaten"]}
+- name: "Story über ein Stichwort aus dem Namen"
+  inputs:
+    umgebung: *umgebung
+    eingabe: "Beim Mahnlauf ist das Dateiformat jetzt entschieden, es wird CSV"
+  evaluators:
+  - Bemerkungen:
+      erwartet:
+      - {story: "IM-2", daily: false, enthaelt: ["CSV"]}
+- name: "Keine passende Story"
+  inputs:
+    umgebung: *umgebung
+    eingabe: "Der Drucker im dritten Stock ist kaputt"
+  evaluators:
+  - Bemerkungen:
+      erwartet:
+      - {story: "", enthaelt: ["Drucker"]}
+- name: "Bitte weglassen, Inhalt behalten"
+  inputs:
+    umgebung: *umgebung
+    eingabe: "Schreib bitte rein, dass IM-1 erst nach dem Wartungsfenster starten kann"
+  evaluators:
+  - Bemerkungen:
+      erwartet:
+      - {story: "IM-1", daily: false, enthaelt: ["Wartungsfenster"], enthaelt_nicht: ["schreib bitte"]}
+- name: "Zwei Stories in einem Satz"
+  inputs:
+    umgebung: *umgebung
+    eingabe: "QG-1 ist abgeschlossen und bei QG-4 fehlt noch die Unterschrift vom Fachbereich"
+  evaluators:
+  - Bemerkungen:
+      erwartet:
+      - {story: "QG-1", enthaelt: ["abgeschlossen"], enthaelt_nicht: ["Unterschrift"]}
+      - {story: "QG-4", enthaelt: ["Unterschrift"], enthaelt_nicht: ["abgeschlossen"]}
+- name: "Datum bleibt im Text, kein Daily erfunden"
+  inputs:
+    umgebung: *umgebung
+    eingabe: "Bei QG-3 warten wir bis 24.11. auf die Freigabe"
+  evaluators:
+  - Bemerkungen:
+      erwartet:
+      - {story: "QG-3", daily: false, enthaelt: ["24.11."]}
+- name: "Datum mit Jahr bleibt im Text"
+  inputs:
+    umgebung: *umgebung
+    eingabe: "ZI-0a wurde am 30.10.2026 abgeschlossen"
+  evaluators:
+  - Bemerkungen:
+      erwartet:
+      - {story: "ZI-0a", daily: false, enthaelt: ["30.10.2026"]}
+- name: "Zahlen bleiben im Text"
+  inputs:
+    umgebung: *umgebung
+    eingabe: "QG-2: der Aufwand steigt von 3 auf 5 Personentage"
+  evaluators:
+  - Bemerkungen:
+      erwartet:
+      - {story: "QG-2", daily: false, enthaelt: ["3", "5"]}
+- name: "Daily morgen"
+  inputs:
+    umgebung: *umgebung
+    eingabe: "QG-2 morgen im Daily ansprechen: die Testdaten fehlen noch"
+  evaluators:
+  - Bemerkungen:
+      erwartet:
+      - {story: "QG-2", daily: 2026-11-17, enthaelt: ["Testdaten"]}
+- name: "Daily an einem Wochentag"
+  inputs:
+    umgebung: *umgebung
+    eingabe: "Fürs Daily am Donnerstag: IM-2 braucht eine Entscheidung zum Dateiformat"
+  evaluators:
+  - Bemerkungen:
+      erwartet:
+      - {story: "IM-2", daily: 2026-11-19, enthaelt: ["Entscheidung"]}
+- name: "Daily ohne Tag meint das nächste"
+  inputs:
+    umgebung: *umgebung
+    eingabe: "QG-4 bitte im nächsten Daily ansprechen, die Abnahme verzögert sich"
+  evaluators:
+  - Bemerkungen:
+      erwartet:
+      - {story: "QG-4", daily: 2026-11-17, enthaelt: ["verzögert"]}
+- name: "Daily-Tag und ein zweites Datum im Text"
+  inputs:
+    umgebung: *umgebung
+    eingabe: "Im Daily am Mittwoch sagen: QG-1 geht am 25.11. live"
+  evaluators:
+  - Bemerkungen:
+      erwartet:
+      - {story: "QG-1", daily: 2026-11-18, enthaelt: ["25.11."]}
+- name: "Nichts Neues vermerkt nichts"
+  inputs:
+    umgebung: *umgebung
+    eingabe: "nein, nichts Neues"
+  evaluators:
+  - Bemerkungen
+- name: "Zuletzt Vermerktes zurücknehmen"
+  inputs:
+    umgebung: *umgebung
+    vorher: ["QG-1 ist fertig getestet"]
+    eingabe: "entferne das wieder"
+  evaluators:
+  - Bemerkungen:
+      entfernt: 1
+- name: "Vermerk mit Nummer zurücknehmen"
+  inputs:
+    umgebung: *umgebung
+    vorher: ["QG-1 ist fertig getestet", "QG-2 braucht neue Testdaten"]
+    eingabe: "lösch bitte Vermerk 1"
+  evaluators:
+  - Bemerkungen:
+      entfernt: 1

@@ -22,7 +22,7 @@ from datetime import date, timedelta
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, ModelRetry, RunContext
 
-from local_agents.agent import MODEL_SETTINGS
+from local_agents.agent import MODEL_SETTINGS, structured
 from local_agents.dates import mentioned_dates
 from local_agents.holidays import WEEKDAYS
 from local_agents.profile import Profile
@@ -76,7 +76,7 @@ class Outcome:
 
 
 feedback_agent = Agent(
-    deps_type=FeedbackDeps, output_type=Feedback, model_settings=MODEL_SETTINGS, retries=2
+    deps_type=FeedbackDeps, output_type=structured(Feedback), model_settings=MODEL_SETTINGS, retries=2
 )
 
 

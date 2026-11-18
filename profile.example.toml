@@ -83,10 +83,11 @@ enabled = true
 model = "large-v3-turbo"
 language = "de"
 
-# Ollama-Modell je Agent (Agentenname = Modell); ohne Eintrag gilt das
-# Standardmodell (gpt-oss:20b oder LOCAL_AGENTS_MODEL). Messwerte: README,
-# Abschnitt "Status-Agent".
+# Ollama-Modell: default gilt fuer alle Agenten, ein Agentenname fuer diesen
+# einen. Ohne Eintrag gilt gpt-oss:20b (oder LOCAL_AGENTS_MODEL). Messwerte:
+# README, Abschnitt "Modell je Agent".
 [models]
+# default = "qwen3.8:27b-mlx"
 # status = "qwen3.5:9b-q8_0"
 
 # Telegram fuer den Scrum Master: aus, solange enabled nicht true ist.

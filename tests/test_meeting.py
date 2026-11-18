@@ -7,6 +7,7 @@ from pydantic_ai import models
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
+from local_agents.testing import structured_reply, wants_structure
 from local_agents import orchestrator
 from local_agents.meeting_agent import analyse, brief_notes, role_in, situation
 from local_agents.meeting_types import BY_ID, MEETING_TYPES, keyword_hint
@@ -36,9 +37,9 @@ def answering(*outputs: dict, seen: list | None = None) -> FunctionModel:
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if seen is not None:
             seen.append(info.instructions)
-        if not info.output_tools:  # Status-Agent: freier Text
+        if not wants_structure(info):  # Status-Agent: freier Text
             return ModelResponse(parts=[TextPart("Als Nächstes das Daily.")])
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, replies.pop(0))])
+        return structured_reply(info, replies.pop(0))
 
     return FunctionModel(respond)
 

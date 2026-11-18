@@ -7,6 +7,7 @@ from pydantic_ai import models
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
+from local_agents.testing import structured_reply
 from local_agents.feedback import is_named, resolve_due, Feedback, NewTask, apply, handle, is_approval
 from local_agents.profile import Context, Profile
 from local_agents.store import OPEN, REJECTED, Store, StoredEvent
@@ -30,7 +31,7 @@ def answering(*outputs: dict, seen: list | None = None) -> FunctionModel:
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if seen is not None:
             seen.append((info.instructions, messages[0].parts[-1].content))
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, replies.pop(0))])
+        return structured_reply(info, replies.pop(0))
 
     return FunctionModel(respond)
 

@@ -8,7 +8,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai import Agent, ModelRetry, NativeOutput, RunContext
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.ollama import OllamaProvider
 
@@ -21,6 +21,12 @@ MAX_OUTPUT_TOKENS = 2048
 # Zwischenueberlegungen sonst gelegentlich in der Antwort, und die Laeufe
 # dauern zwei- bis dreimal so lange.
 MODEL_SETTINGS = {"max_tokens": MAX_OUTPUT_TOKENS, "openai_reasoning_effort": "low"}
+# Wie Agenten mit festem Antwortschema ihre Antwort abgeben:
+# "tool"   = das Modell ruft ein Ausgabe-Werkzeug auf (Standard von Pydantic AI),
+# "native" = Ollama erzwingt das Schema beim Erzeugen der Antwort.
+# Gemessen mit gpt-oss:20b (README, Abschnitt "Stand"): kein Unterschied, der
+# ueber die Schwankung von Lauf zu Lauf hinausgeht. Deshalb bleibt der Standard.
+OUTPUT_MODE = os.environ.get("LOCAL_AGENTS_OUTPUT", "tool")
 
 INSTRUCTIONS = (
     "Du beantwortest Fragen zu Dateien in einem Projektverzeichnis. "
@@ -43,6 +49,13 @@ def ollama_model(name: str = "") -> OpenAIChatModel:
     anderes bekommen (``[models]`` im Profil).
     """
     return OpenAIChatModel(name or MODEL_NAME, provider=OllamaProvider(base_url=OLLAMA_BASE_URL))
+
+
+def structured(output_type):
+    """Das Antwortschema eines Agenten in der eingestellten Ausgabeart (``OUTPUT_MODE``)."""
+    if OUTPUT_MODE not in ("tool", "native"):
+        raise ValueError(f"LOCAL_AGENTS_OUTPUT={OUTPUT_MODE!r} unbekannt. Erlaubt: tool, native.")
+    return NativeOutput(output_type) if OUTPUT_MODE == "native" else output_type
 
 
 def answer_with_notes(agent: Agent, question: str, deps, model) -> str:

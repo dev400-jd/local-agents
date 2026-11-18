@@ -1,0 +1,100 @@
+# yaml-language-server: $schema=rueckmeldung_schema.json
+# Erfundene Fälle für die Rückmeldung auf den Plan. Aufbau: README, Abschnitt "Messen".
+# Die Aufgaben bekommen die Nummern 1, 2, 3 ... in der Reihenfolge der Liste.
+name: rueckmeldung
+cases:
+- name: "Schlichtes Ja ändert nichts"
+  inputs:
+    umgebung: &umgebung
+      heute: 2026-11-20   # ein Freitag
+      aufgaben:
+      - {titel: "Vorbereitung: Daily (Mo 23.11. 09:00)", faellig: 2026-11-22}   # 1
+      - {titel: "Vorbereitung: Jour fixe (Mo 23.11. 14:00)", faellig: 2026-11-22}   # 2
+      - {titel: "Vorbereitung: Architekturrunde (Di 24.11. 10:00)", faellig: 2026-11-23}   # 3
+      - {titel: "Nachricht an Kim Beispiel: Teamrunde (Mi 25.11. 11:00) verschieben, weil Kundentag", faellig: 2026-11-22}   # 4
+      - {titel: "Vorbereitung: Teamrunde (Mi 25.11. 11:00)", faellig: 2026-11-24}   # 5
+      - {titel: "Vorbereitung: Sprint Review (Do 26.11. 15:00)", faellig: 2026-11-25}   # 6
+    eingabe: "ja passt so"
+  evaluators:
+  - Aufgaben
+- name: "Ausdrücklich nichts ändern"
+  inputs:
+    umgebung: *umgebung
+    eingabe: "bitte nichts ändern, das ist alles richtig so"
+  evaluators:
+  - Aufgaben
+- name: "Eine Aufgabe über den Terminnamen"
+  inputs:
+    umgebung: *umgebung
+    eingabe: "die Vorbereitung fürs Daily brauche ich nicht"
+  evaluators:
+  - Aufgaben:
+      raus: [1]
+- name: "Eine Aufgabe über die Nummer"
+  inputs:
+    umgebung: *umgebung
+    eingabe: "nimm Aufgabe 4 raus"
+  evaluators:
+  - Aufgaben:
+      raus: [4]
+- name: "Alle Vorbereitungen eines Tages"
+  inputs:
+    umgebung: *umgebung
+    eingabe: "alle Vorbereitungen für Montag raus"
+  evaluators:
+  - Aufgaben:
+      raus: [1, 2]
+- name: "Beide Aufgaben zu einem Termin"
+  inputs:
+    umgebung: *umgebung
+    eingabe: "die Teamrunde komplett raus, beide Aufgaben dazu"
+  evaluators:
+  - Aufgaben:
+      raus: [4, 5]
+- name: "Zustimmung mit einer Ausnahme"
+  inputs:
+    umgebung: *umgebung
+    eingabe: "passt, aber die Architekturrunde bereite ich nicht vor"
+  evaluators:
+  - Aufgaben:
+      raus: [3]
+- name: "Neue Aufgabe bis zu einem Wochentag"
+  inputs:
+    umgebung: *umgebung
+    eingabe: "zusätzlich bis Dienstag die Folien für den Vorstand fertig machen"
+  evaluators:
+  - Aufgaben:
+      neu:
+      - {titel_enthaelt: "Folie", faellig: 2026-11-24}
+- name: "Neue Aufgabe morgen"
+  inputs:
+    umgebung: *umgebung
+    eingabe: "ich muss morgen noch die Reisekosten einreichen"
+  evaluators:
+  - Aufgaben:
+      neu:
+      - {titel_enthaelt: "Reisekosten", faellig: 2026-11-21}
+- name: "Neue Aufgabe ohne Tag ist heute fällig"
+  inputs:
+    umgebung: *umgebung
+    eingabe: "füg noch hinzu: Angebot prüfen"
+  evaluators:
+  - Aufgaben:
+      neu:
+      - {titel_enthaelt: "Angebot", faellig: 2026-11-20}
+- name: "Herausnehmen und ergänzen in einer Antwort"
+  inputs:
+    umgebung: *umgebung
+    eingabe: "die Vorbereitung zum Sprint Review raus, dafür bis zum 25. die Demo aufsetzen"
+  evaluators:
+  - Aufgaben:
+      raus: [6]
+      neu:
+      - {titel_enthaelt: "Demo", faellig: 2026-11-25}
+- name: "Unklare Antwort ändert nichts und fragt nach"
+  inputs:
+    umgebung: *umgebung
+    eingabe: "das mit dem Dings am Nachmittag passt mir nicht"
+  evaluators:
+  - Aufgaben:
+      unklar: true

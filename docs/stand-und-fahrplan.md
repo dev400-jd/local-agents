@@ -1,6 +1,6 @@
 # Stand und Fahrplan
 
-Stand: 2026-11-16. Diese Seite beschreibt, was die Agenten heute können, wo
+Stand: 2026-11-18. Diese Seite beschreibt, was die Agenten heute können, wo
 ihre Grenzen liegen und woran als Nächstes zu arbeiten ist. Wie die Bausteine
 bedient werden, steht in der [README](../README.md).
 
@@ -24,7 +24,7 @@ bisher selbst eine Aufgabe.
 | Story-Leser | `stories.py` | Liest User Stories aus Markdown unabhängig vom Aufbau der Dateien | Nur Markdown im Ordner, kein Anschluss an das Projektwerkzeug. Erkennt keine Änderungen zwischen zwei Ständen. |
 | Scrum Master | `scrum_master.py`, `telegram_bot.py` | Vermerkt Bemerkungen je Story, auf Wunsch fürs nächste Daily, per Terminal, Dialog oder Telegram | Beantwortet keine Fragen. Ein Satz zu mehreren Stories landet ganz bei jeder. Der Daily-Bezug hängt an Stichwörtern. |
 | Sprache | `voice.py`, `listen.py` | Vorlesen (Piper) und Zuhören (Whisper), beides lokal | Kein durchgehendes Gespräch, nur Frage und Antwort an einer Stelle im Planungs-Agenten. |
-| Messung | `evals.py` | Lässt Scrum Master und Rückmeldung gegen feste Fälle laufen, mehrfach, mit Quote und Vergleich zum letzten Lauf | 28 erfundene Fälle, noch keine echten. Keine Fälle für Status-Agent, Termin-Agent und Story-Erkennung. |
+| Messung | `evals.py` | Lässt Scrum Master und Rückmeldung gegen feste Fälle laufen (auf Basis von pydantic-evals), mehrfach, mit Quote, Mitschnitt der Modellantwort und Vergleich zum letzten Lauf | 28 erfundene Fälle, noch keine echten. Keine Fälle für Status-Agent, Termin-Agent und Story-Erkennung. |
 | Profil und Datenbank | `profile.py`, `store.py` | Gemeinsames Gedächtnis: Kontexte, Rolle, Stresslevel, Aufgaben, Notizen, Laufprotokoll | Kein Gedächtnis über Gespräche, keine gelernten Vorlieben. |
 
 ## Fahrplan je Kategorie
@@ -65,7 +65,11 @@ nachgemessen (57 von 60 Läufen statt 30 von 36). Als Nächstes:
 
 - Scrum Master: die Bitte („schreib bitte rein, dass") bleibt oft im Text,
   die Zuordnung über ein Stichwort aus dem Namen schwankt
+- Rückmeldung: bei „beide Aufgaben zu einem Termin" wird öfter nur eine
+  herausgenommen
 - echte Fälle aus dem Alltag sammeln
+- Unterschiede zwischen Einstellungen nur mit mehr Läufen beurteilen: Zwei
+  Messläufe desselben Stands unterscheiden sich um einige Läufe
 - Fälle für Status-Agent, Termin-Agent und Story-Erkennung
 
 ### 4. Verlässlichkeit des kleinen Modells
@@ -114,3 +118,9 @@ Ohne Messung ist nicht zu erkennen, ob die anderen Schritte etwas verbessern.
 
 - 2026-11-16: Ein eigener Daily-Agent ist zurückgestellt. Der Scrum Master
   deckt die Vorbereitung des Dailys vorerst ab.
+- 2026-11-18: Die Ausgabeart bleibt `tool`. Die Messung zeigte für `native`
+  keinen Unterschied, der über die Schwankung hinausgeht.
+- 2026-11-18: Das Modell wird im Profil gewählt (`[models] default`). Der
+  Code-Standard bleibt `gpt-oss:20b`. `qwen3.8:27b-mlx` besteht alle Messfälle
+  (140 von 140 Läufen gegen 130 bis 136), ist aber etwa fünfmal langsamer und
+  belegt 21 bis 23 GB von 24 GB RAM.

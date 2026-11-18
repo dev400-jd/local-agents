@@ -183,7 +183,7 @@ def main(argv: list[str]) -> int:
     question = argv[1] if len(argv) == 2 else DEFAULT_QUESTION
     try:
         deps = CalendarDeps(today=date.today(), profile=load_profile())
-        output = answer(question, deps, ollama_model())
+        output = answer(question, deps, ollama_model(deps.profile.model_for("kalender")))
     except (CalendarAccessError, ProfileError) as exc:
         print(exc, file=sys.stderr)
         return 1
