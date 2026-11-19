@@ -38,6 +38,8 @@ Was die Messung der Agenten ergeben hat, steht in
 | Termin-Agent | `local_agents/meeting_agent.py` | erkennt die Art des Termins und welche Ergebnisse dir dafür helfen |
 | Terminarten | `local_agents/meeting_types.py` | Katalog: Zweck und übliche Beiträge je Terminart, auch Scrum |
 | Orchestrierung | `local_agents/orchestrator.py` | reicht die nächste Aufgabe von Agent zu Agent weiter |
+| Nachrichten-Agent | `local_agents/message_agent.py` | schreibt den Entwurf der Nachricht zu einer Verschiebe-Aufgabe und legt ihn zur Freigabe vor |
+| Textprüfungen | `local_agents/checks.py` | prüft Texte des Modells, etwa auf Zahlen, die nicht in der Eingabe stehen |
 | User Stories | `local_agents/stories.py` | liest Features und Stories aus Markdown-Dateien, Wissensbasis für den Daily-Agenten |
 | Scrum Master | `local_agents/scrum_master.py` | fragt nach Neuigkeiten zu User Stories und vermerkt sie, auf Wunsch für ein Daily |
 | Telegram-Kanal | `local_agents/telegram_bot.py` | Bemerkungen an den Scrum Master vom Handy aus; freiwillig, verlässt den Rechner |
@@ -58,10 +60,14 @@ Stimme und Spracherkennung. Einzige Ausnahme ist der freiwillige
    lässt den Plan stehen, sonst nimmt der Agent Aufgaben heraus oder ergänzt
    welche. Danach gilt der Plan als abgesegnet.
 4. **Abarbeiten** (`orchestrator`): Der Status-Agent nennt zu Datum und
-   Uhrzeit die eine Aufgabe, die als Nächstes dran ist, und übergibt sie dem
-   Termin-Agenten. Der erkennt die Art des Termins und nennt die Ergebnisse,
-   die dir in deiner Rolle dafür helfen. Agenten, die diese Ergebnisse
-   erarbeiten, gibt es noch nicht.
+   Uhrzeit die eine Aufgabe, die als Nächstes dran ist, und übergibt sie je
+   nach Art weiter. Bei einer Vorbereitung erkennt der Termin-Agent die Art
+   des Termins und nennt die Ergebnisse, die dir in deiner Rolle dafür helfen;
+   Agenten, die diese Ergebnisse erarbeiten, gibt es noch nicht. Bei einer
+   Verschiebe-Aufgabe schreibt der Nachrichten-Agent den Entwurf der Nachricht.
+5. **Freigeben** (`message_agent`): Du übernimmst den Entwurf, änderst ihn
+   oder verwirfst ihn. Das ist der erste Schritt, in dem ein Agent eine
+   Aufgabe erledigt.
 
 Zwischen Planen und Abarbeiten ändert sich der Kalender. Deshalb gleicht der
 Code die Datenbank vor jedem Lesen der Aufgaben mit dem Kalender ab, siehe
@@ -70,6 +76,7 @@ Code die Datenbank vor jedem Lesen der Aufgaben mit dem Kalender ab, siehe
 ```bash
 .venv/bin/python -m local_agents.planner_agent   # Schritte 1 bis 3
 .venv/bin/python -m local_agents.orchestrator    # Schritt 4
+.venv/bin/python -m local_agents.message_agent   # Schritt 5
 .venv/bin/python -m local_agents.tasks           # der ganze Plan
 ```
 
@@ -603,7 +610,8 @@ Repos, weil Termintitel und Kundennamen darin stehen. Anderer Pfad:
 | `tasks` | Aufgaben: Art (`kind`), Titel, Kontext, Fertig-bis-Datum, Status, zuständiger Agent, Ergebnis, zugehöriger Termin |
 | `briefs` | Einordnung des Termins hinter einer Aufgabe: Terminart, Begründung, Ergebnisse für den Nutzer, Rolle |
 | `story_notes` | Bemerkungen zu User Stories: Story, Feature, Text, Daily-Datum, Status, Kanal, Wortlaut |
-| `runs` | Protokoll: welcher Agent wann lief, mit Status und Kurzfassung. Einträge: `planner` (Planungslauf), `rueckmeldung` (Antwort mit Änderungen ausgewertet), `freigabe` (Plan abgesegnet), `termin` (Termin eingeordnet), `scrum_master` (Nachfrage-Runde), `abgleich` (Kalenderabgleich, nur wenn sich etwas geändert hat) |
+| `preferences` | Vorgaben des Nutzers für einzelne Agenten, aus seinen Korrekturen (bisher: Nachrichten-Agent) |
+| `runs` | Protokoll: welcher Agent wann lief, mit Status und Kurzfassung. Einträge: `planner` (Planungslauf), `rueckmeldung` (Antwort mit Änderungen ausgewertet), `freigabe` (Plan abgesegnet), `termin` (Termin eingeordnet), `scrum_master` (Nachfrage-Runde), `abgleich` (Kalenderabgleich, nur wenn sich etwas geändert hat), `nachricht` (Entwurf geschrieben) |
 
 Status einer Aufgabe: `offen`, `in_arbeit`, `erledigt`, `verworfen` (Termin
 entfallen) und `abgelehnt` (von dir herausgenommen). Die
@@ -716,6 +724,95 @@ Titel (nur der Projektname) ordnet es nach Dauer und Teilnehmerzahl ein, das
 ist geraten. Der Termin-Agent läuft mit mittlerem Reasoning-Aufwand: Mit
 niedrigem übernahm `gpt-oss:20b` die Katalog-Beiträge wörtlich oder erfand
 Projektdetails.
+
+## Nachrichten-Agent
+
+Der erste Agent, der eine Aufgabe erledigt statt sie nur zu nennen. Für eine
+Verschiebe-Aufgabe („Nachricht an <Organisator>: Termin verschieben")
+schreibt er den Entwurf der Nachricht und legt ihn dir zur Freigabe vor.
+Gesendet wird nichts: „Übernehmen" legt den Text in die Zwischenablage und
+hakt die Aufgabe ab; das Abschicken in Teams oder Outlook bleibt bei dir.
+
+```bash
+.venv/bin/python -m local_agents.message_agent             # nächste offene Verschiebe-Aufgabe
+.venv/bin/python -m local_agents.message_agent 18          # Aufgabe #18
+.venv/bin/python -m local_agents.message_agent --neu 18    # neuen Entwurf schreiben
+.venv/bin/python -m local_agents.message_agent vorgaben    # gemerkte Vorgaben zeigen
+.venv/bin/python -m local_agents.message_agent vergiss 3   # Vorgabe 3 entfernen
+```
+
+```text
+#18 Nachricht an Erika Muster: Jour fixe (Mi 18.11. 10:00) verschieben, weil Kundentag Kunde ACME
+
+Hallo Erika,
+
+ich muss den Termin „Jour fixe" am Mi 18.11. um 10:00 Uhr verschieben, da ich an
+diesem Tag beim Kunden vor Ort bin. Bitte lass mich wissen, wann ein anderer Tag
+passen würde.
+
+Viele Grüße
+Alex
+
+Übernehmen (Enter), verwerfen (n), Aufgabe ablehnen (a) oder Änderungswunsch eintippen: kürzer, und ohne "muss"
+```
+
+Der Ablauf in vier Schritten:
+
+1. **Ausführen:** Das Modell schreibt die Nachricht aus Angaben, die der Code
+   zusammenstellt: Art der Nachricht, Empfänger, Termin, Grund, Absender,
+   Anrede.
+2. **Selbst prüfen:** Der Code prüft den Entwurf und schickt ihn bei Mängeln
+   ans Modell zurück (bis zu dreimal). Geprüft wird: Titel und Datum des
+   Termins genannt, keine Zahl, die nicht in den Angaben steht (also kein
+   erfundener Ersatztermin), kein Platzhalter in Klammern, Anrede mit dem
+   Vornamen, du oder Sie durchgehend, 60 bis 700 Zeichen; bei einer Bitte an
+   den Organisator außerdem, dass die Nachricht ihn wirklich bittet, statt zu
+   behaupten, du würdest den Termin selbst verschieben. Gelingt es dem
+   Modell nicht, gilt eine feste Vorlage; die Ausgabe weist darauf hin.
+3. **Freigeben:** Enter übernimmt, `n` verwirft den Entwurf (die Aufgabe
+   bleibt offen), `a` lehnt die Aufgabe ab. Alles andere gilt als
+   Änderungswunsch in deinen Worten; der Agent schreibt den Entwurf damit neu.
+4. **Lernen:** Nach dem Übernehmen fragt der Agent zu jedem Änderungswunsch,
+   ob er ihn für künftige Nachrichten merken soll. Gemerkte Vorgaben stehen
+   bei jedem neuen Entwurf im Auftrag an das Modell (die letzten fünf).
+
+Drei Arten von Nachrichten, je nach Verschiebe-Aufgabe:
+
+| Aufgabe beginnt mit | Nachricht |
+|---|---|
+| „Nachricht an …" | Bitte an den Organisator, den Termin auf einen anderen Tag zu legen |
+| „Absage an …" (große Runde) | Absage; der Termin findet ohne dich statt |
+| „Selbst verschieben: …" | Ankündigung an die Eingeladenen, dass du den Termin verschiebst |
+
+Was der Code dem Modell abnimmt:
+
+- **Der Grund:** Aus „Kundentag Kunde ACME" wird „Ich bin an diesem Tag beim
+  Kunden vor Ort.", aus dem internen Block bei hohem Stresslevel „Ich bin im
+  Kundenprojekt zurzeit stark eingebunden …". Kundenname und Stresslevel
+  stehen nicht in den Angaben für das Modell.
+- **Der Vorname:** aus dem Anzeigenamen des Organisators („Erika Muster" oder
+  „Muster, Erika"); ist er unbekannt, grüßt die Nachricht ohne Namen.
+- **Kein Ersatztermin:** Der Agent kennt deine freien Zeiten nicht. Er bittet
+  um einen anderen Tag, schlägt aber keinen vor.
+
+Der Entwurf steht in der Spalte `result` der Aufgabe, die solange den Status
+`in_arbeit` hat; ein zweiter Aufruf zeigt denselben Entwurf wieder. Ohne
+Terminal (etwa aus der Orchestrierung) wird der Entwurf nur geschrieben und
+gezeigt, nicht abgefragt. Die Anrede steht im Profil:
+
+```toml
+[messages]
+form = "du"    # oder "Sie"
+```
+
+Hat der Termin schon begonnen, schreibt der Agent keinen Entwurf mehr: Eine
+Nachricht dazu käme zu spät. Der Befehl verwirft solche Verschiebe-Aufgaben
+beim Start und nennt sie.
+
+Grenzen: Der Agent sendet nichts und schlägt keinen Ersatztermin vor. Wird
+der Termin nach dem Entwurf umbenannt oder verschoben, bleibt der alte Entwurf
+gespeichert; `--neu` schreibt ihn neu. Eine gemerkte Vorgabe gilt für alle
+Nachrichten, auch wenn sie nur für einen Empfänger gemeint war.
 
 ## User Stories als Markdown
 
@@ -927,7 +1024,7 @@ Umgebungsvariable `LOCAL_AGENTS_MODEL`):
 [models]
 default = "qwen3.8:27b-mlx"
 # status = "gpt-oss:20b"   # Agentennamen: planner, rueckmeldung, status, termin,
-#                          # stories, scrum_master, kalender, asana
+#                          # nachricht, stories, scrum_master, kalender, asana
 ```
 
 Die Rückmeldung auf den Plan läuft im Planungs-Agenten und nutzt dessen
@@ -1218,6 +1315,7 @@ Geprüft wird mit Code am Endzustand, nicht mit einem zweiten Modell:
 | `status` | `Status` | die Sätze des Modells nennen die Aufgabe, die dran ist, und keine andere; keine Zahl, die nicht in der Eingabe steht; kein „du musst" |
 | `termin` | `Terminart` | die erkannte Terminart; das Modell hat selbst geantwortet (kein Rückfall auf den Katalog); Zahl der Ergebnisse |
 | `stories` | `Stories` | welche Überschriften eines Dokuments das Modell als Stories erkennt, ohne Hilfe durch Kürzel |
+| `nachricht` | `Nachricht` | das Modell schreibt den Entwurf selbst (kein Rückfall auf die Vorlage); die Selbstprüfung findet nichts; verlangte und verbotene Wendungen (kein Kundenname, Absage klingt wie eine Absage, gemerkte Vorgabe eingehalten) |
 
 Nicht gemessen werden die Ergebnisliste des Termin-Agenten (es gibt keine
 eindeutig richtige Antwort; geprüft wird nur ihre Länge), die freien Texte von
@@ -1359,6 +1457,7 @@ legt einen solchen Fall im privaten Ordner ab, in `<agent>-alltag.yaml`:
 .venv/bin/python -m local_agents.evals merke status                    # die jetzt offenen Aufgaben zur jetzigen Uhrzeit
 .venv/bin/python -m local_agents.evals merke termin 12                 # der Termin hinter Aufgabe #12
 .venv/bin/python -m local_agents.evals merke stories ~/pfad/feature.md # eine Datei mit Stories
+.venv/bin/python -m local_agents.evals merke nachricht 18              # die Verschiebe-Aufgabe #18 mit ihrem Termin
 ```
 
 Als Erwartung steht im Fall zunächst, was der Agent tatsächlich getan hat
@@ -1498,7 +1597,16 @@ gelaufen (Abbruch durch Speichermangel).
     Story-Dateien Kürzel haben, denn dann entscheidet die Regel.
 - Der Befehl `merke` (2026-11-18): mit geskriptetem Modell getestet und gegen
   eine Kopie der echten Datenbank ausgeführt.
-- Noch offen: Agenten, die Aufgaben selbst erledigen; vom Nutzer ergänzte
+- Nachrichten-Agent (2026-11-19): gebaut und mit geskriptetem Modell
+  getestet. Ein einzelner Lauf mit einem erfundenen Termin gegen
+  `gpt-oss:20b` lieferte in 8 s einen Entwurf, an dem die Selbstprüfung nichts
+  fand. Die neun Messfälle sind noch nicht gegen ein Modell gelaufen. Erster
+  Lauf des Nutzers gegen die echte Datenbank: Der Agent schrieb einen Entwurf
+  zu einem Termin vom Vortag und formulierte „ich möchte den Termin
+  verschieben", obwohl der Empfänger eingeladen hatte. Beides ist behoben
+  (kein Entwurf nach Terminbeginn; die Bitte an den Organisator wird geprüft),
+  aber noch nicht erneut von Hand erprobt.
+- Noch offen: weitere Agenten, die Aufgaben selbst erledigen; vom Nutzer ergänzte
   Aufgaben (`manuell`) erscheinen in `tasks` und beim Status-Agenten, aber
   nicht in der Planliste und der Kurzfassung des Planungs-Agenten.
 - Termin-Agent mit `gpt-oss:20b` gegen eine Kopie der echten Datenbank

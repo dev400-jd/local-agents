@@ -26,7 +26,8 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_evals import Dataset
 from pydantic_evals.evaluators import EvaluationReason, Evaluator, EvaluatorContext
 
-from local_agents import feedback, meeting_agent, scrum_master, status_agent, stories
+from local_agents import feedback, meeting_agent, message_agent, scrum_master, status_agent, stories
+from local_agents.checks import invented_numbers
 from local_agents.meeting_types import BY_ID
 from local_agents.profile import CUSTOMER, INTERNAL, Context, Profile
 from local_agents.store import IN_PROGRESS, NOTE_OPEN, NOTE_REMOVED, OPEN, REJECTED, Store, StoredEvent
@@ -285,19 +286,6 @@ class Aufgaben(Evaluator[FeedbackInputs, FeedbackOutput, Any]):
 
 
 # --- Status-Agent
-
-
-NUMBER = re.compile(r"\d+")
-
-
-def invented_numbers(answer: str, facts: str) -> list[str]:
-    """Zahlen der Antwort, die in den Fakten nicht vorkommen (auch Teile von Datum und Uhrzeit).
-
-    Ein kleines Modell erfindet gern Angaben wie "in 6 Minuten". Jede Ziffernfolge
-    der Antwort muss deshalb auch in dem stehen, was das Modell zu sehen bekam.
-    """
-    known = set(NUMBER.findall(facts))
-    return [number for number in dict.fromkeys(NUMBER.findall(answer)) if number not in known]
 
 
 class StatusTaskItem(Strict):
@@ -571,6 +559,101 @@ class Stories(Evaluator[StoriesInputs, StoriesOutput, Any]):
         return EvaluationReason(value=not problems, reason="; ".join(problems))
 
 
+# --- Nachrichten-Agent
+
+
+class NachrichtSetup(Strict):
+    """Wie die Nachricht klingen soll: Absender und Anrede aus dem Profil."""
+
+    absender: str = "Alex Beispiel"
+    anrede: Literal["du", "Sie"] = "du"
+
+
+class NachrichtInputs(Strict):
+    umgebung: NachrichtSetup
+    aufgabe: str  # Titel der Verschiebe-Aufgabe, wie der Planungs-Agent ihn schreibt
+    titel: str  # Titel des Termins
+    beginn: datetime
+    organisator: str = ""  # Anzeigename aus dem Kalender
+    vorgaben: list[str] = []  # gemerkte Vorgaben des Nutzers
+
+
+class NachrichtOutput(BaseModel):
+    text: str
+    quelle: str  # "modell" oder "vorlage"
+    maengel: list[str]  # was die Selbstpruefung des Agenten am Text bemaengelt
+    modell: str = ""
+
+
+def nachricht_task(model) -> Callable[[NachrichtInputs], NachrichtOutput]:
+    def run(inputs: NachrichtInputs) -> NachrichtOutput:
+        profile = Profile(
+            name=inputs.umgebung.absender,
+            message_form=inputs.umgebung.anrede,
+            contexts=(Context(INTERNAL, INTERNAL, "Intern"),),
+        )
+        store = Store(":memory:")
+        try:
+            event = StoredEvent(
+                "messung",
+                inputs.titel,
+                inputs.beginn,
+                inputs.beginn + timedelta(minutes=60),
+                INTERNAL,
+                organizer=inputs.organisator,
+            )
+            store.upsert_event(event)
+            store.upsert_task(event.id, message_agent.MOVE, inputs.aufgabe, INTERNAL, inputs.beginn.date(), "messung")
+            for item in inputs.vorgaben:
+                store.add_preference(message_agent.AGENT_NAME, item)
+            task = store.tasks()[0]
+            with capture_run_messages() as messages:
+                result = message_agent.draft(task, event, profile, store, model)
+            request = message_agent.build_request(task, event, profile)
+            return NachrichtOutput(
+                text=result.text,
+                quelle=result.source,
+                maengel=message_agent.problems(result.text, request),
+                modell=model_said(messages),
+            )
+        finally:
+            store.close()
+
+    return run
+
+
+@dataclass
+class Nachricht(Evaluator[NachrichtInputs, NachrichtOutput, Any]):
+    """Prueft den Entwurf einer Nachricht.
+
+    Immer geprueft: Das Modell hat den Entwurf selbst geschrieben (kein
+    Rueckfall auf die Vorlage), und die Selbstpruefung des Agenten findet
+    nichts (Termin, Datum, Anrede, keine erfundene Zahl, kein Platzhalter).
+    ``nennt`` / ``nennt_nicht``: Textstuecke. ``eines_von``: Mindestens eines
+    dieser Textstuecke muss vorkommen (etwa Wendungen fuer eine Absage).
+    """
+
+    nennt: list[str] = field(default_factory=list)
+    nennt_nicht: list[str] = field(default_factory=list)
+    eines_von: list[str] = field(default_factory=list)
+
+    def evaluate(self, ctx: EvaluatorContext[NachrichtInputs, NachrichtOutput, Any]) -> EvaluationReason:
+        output = ctx.output
+        problems = list(output.maengel)
+        if output.quelle == message_agent.TEMPLATE:
+            problems.append("Modell lieferte nichts Brauchbares (Rückfall auf die Vorlage)")
+        text = output.text.casefold()
+        for part in self.nennt:
+            if part.casefold() not in text:
+                problems.append(f"„{part}“ fehlt im Entwurf")
+        for part in self.nennt_nicht:
+            if part.casefold() in text:
+                problems.append(f"„{part}“ gehört nicht in den Entwurf")
+        if self.eines_von and not any(part.casefold() in text for part in self.eines_von):
+            problems.append(f"keines von {', '.join(self.eines_von)} im Entwurf")
+        return EvaluationReason(value=not problems, reason="; ".join(problems))
+
+
 # --- Agenten und ihre Falldateien
 
 
@@ -591,4 +674,5 @@ AGENTS: dict[str, Suite] = {
     # Der Termin-Agent denkt mit mittlerem Aufwand nach und braucht je Lauf deutlich laenger.
     meeting_agent.AGENT_NAME: Suite(Dataset[TerminInputs, TerminOutput, Any], (Terminart,), termin_task, timeout=300.0),
     stories.AGENT_NAME: Suite(Dataset[StoriesInputs, StoriesOutput, Any], (Stories,), stories_task),
+    message_agent.AGENT_NAME: Suite(Dataset[NachrichtInputs, NachrichtOutput, Any], (Nachricht,), nachricht_task),
 }

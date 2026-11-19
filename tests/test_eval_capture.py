@@ -126,6 +126,19 @@ class TestOtherAgents(CaptureCase):
             with self.assertRaises(capture.CaptureError):
                 capture.termin_case(self.store, PROFILE, NOW, missing)
 
+    def test_message_takes_the_move_task_event_and_preferences(self) -> None:
+        self.plan()
+        title = "Nachricht an Kim Beispiel: Jour fixe (Di 17.11. 14:00) verschieben, weil Kundentag Kunde ACME"
+        self.store.upsert_task("a", "verschieben", title, "intern", date(2026, 11, 16), "planner")
+        self.store.add_preference("nachricht", "kürzer")
+        case = capture.nachricht_case(self.store, PROFILE, NOW, 4)
+        self.assertEqual(case["inputs"]["aufgabe"], title)
+        self.assertEqual(case["inputs"]["umgebung"], {"absender": "Absender", "anrede": "du"})
+        self.assertEqual(case["inputs"]["vorgaben"], ["kürzer"])
+        self.assertEqual(len(self.saved("nachricht", case)), 1)
+        with self.assertRaises(capture.CaptureError):
+            capture.nachricht_case(self.store, PROFILE, NOW, 1)  # eine Vorbereitung
+
     def test_stories_file_is_stored_with_its_full_path(self) -> None:
         file = self.folder / "feature.md"
         file.write_text("# Titel\n\n## QG-1: Story\n\nText\n", encoding="utf-8")

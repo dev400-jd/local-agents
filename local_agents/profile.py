@@ -74,6 +74,8 @@ class Profile:
     move_lead_days: int = 3
     # Vor dem Lesen der Aufgaben den Kalender abgleichen (sync.py).
     sync_enabled: bool = True
+    # Anrede in Nachrichtenentwuerfen (message_agent.py): "du" oder "Sie".
+    message_form: str = "du"
     # Kalenderwache (watch.py): Aenderungen als macOS-Mitteilung zeigen, vorlesen.
     watch_notify: bool = True
     watch_speak: bool = False
@@ -258,8 +260,12 @@ def load_profile(path: Path | None = None) -> Profile:
     speaker = speech.get("speaker")
     if speaker is not None and (isinstance(speaker, bool) or not isinstance(speaker, int) or speaker < 0):
         raise ProfileError(f"{path}: speaker in [voice] muss eine ganze Zahl ab 0 sein.")
+    form = str(data.get("messages", {}).get("form", "du"))
+    if form not in ("du", "Sie"):
+        raise ProfileError(f"{path}: form in [messages] muss \"du\" oder \"Sie\" sein.")
     return Profile(
         **days,
+        message_form=form,
         voice_enabled=bool(speech.get("enabled", True)),
         voice=str(speech.get("voice", "Anna")),
         voice_model=str(speech.get("model", "de_DE-thorsten-high")),

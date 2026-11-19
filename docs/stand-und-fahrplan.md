@@ -1,6 +1,6 @@
 # Stand und Fahrplan
 
-Stand: 2026-11-18. Diese Seite beschreibt, was die Agenten heute können, wo
+Stand: 2026-11-19. Diese Seite beschreibt, was die Agenten heute können, wo
 ihre Grenzen liegen und woran als Nächstes zu arbeiten ist. Wie die Bausteine
 bedient werden, steht in der [README](../README.md). Was die Messung der
 Agenten ergeben hat, steht in [messung-erkenntnisse.md](messung-erkenntnisse.md).
@@ -10,9 +10,10 @@ beschrieben ist, zieht die betroffene Zeile nach und setzt das Datum oben neu.
 
 ## Bestand
 
-Elf Agenten und Bausteine lesen Kalender, Asana und Story-Dateien, machen
-daraus Aufgaben und Notizen und sprechen mit dem Nutzer. Keiner davon erledigt
-bisher selbst eine Aufgabe.
+Zwölf Agenten und Bausteine lesen Kalender, Asana und Story-Dateien, machen
+daraus Aufgaben und Notizen und sprechen mit dem Nutzer. Einer davon erledigt
+selbst eine Aufgabe: Der Nachrichten-Agent schreibt den Entwurf zu einer
+Verschiebe-Aufgabe.
 
 | Baustein | Modul | Kann | Grenzen |
 |---|---|---|---|
@@ -21,6 +22,7 @@ bisher selbst eine Aufgabe.
 | Planungs-Agent | `planner_agent.py` | Legt je Termin Vorbereitungs- und Verschiebe-Aufgaben mit Fälligkeit an, liest eine Kurzfassung vor, nimmt Rückmeldung an | Regeln sind fest im Code. Manuell ergänzte Aufgaben fehlen in Planliste und Kurzfassung. Plant nur auf Aufruf. |
 | Kalenderabgleich und Kalenderwache | `sync.py`, `watch.py` | Halten die Datenbank im Hintergrund aktuell, erkennen verschobene, abgesagte und neue Termine | Serienfälle sind nur in Tests nachgestellt. Verhalten nach Ruhezustand und Neuanmeldung ist nicht erprobt. |
 | Status-Agent | `status_agent.py` | Nennt die eine Aufgabe, die jetzt dran ist | Reihenfolge nur nach Fälligkeit, ohne Aufwand, Wichtigkeit oder freie Zeit im Kalender. |
+| Nachrichten-Agent | `message_agent.py` | Schreibt den Entwurf der Nachricht zu einer Verschiebe-Aufgabe, prüft ihn selbst, legt ihn zur Freigabe vor und merkt sich Korrekturen als Vorgaben | Sendet nichts und schlägt keinen Ersatztermin vor. Noch nicht gegen ein Modell gemessen, Freigabe-Dialog nicht von Hand erprobt. Vorgaben gelten für alle Empfänger. |
 | Termin-Agent und Orchestrierung | `meeting_agent.py`, `orchestrator.py` | Erkennt die Terminart (14 Typen) und nennt Ergebnisse, die dem Nutzer in seiner Rolle helfen | Rät aus Titel und Organisator. Die Ergebnisse schwanken zwischen Läufen, und niemand erarbeitet sie. |
 | Story-Leser | `stories.py` | Liest User Stories aus Markdown unabhängig vom Aufbau der Dateien | Nur Markdown im Ordner, kein Anschluss an das Projektwerkzeug. Erkennt keine Änderungen zwischen zwei Ständen. |
 | Scrum Master | `scrum_master.py`, `telegram_bot.py` | Vermerkt Bemerkungen je Story, auf Wunsch fürs nächste Daily, per Terminal, Dialog oder Telegram | Beantwortet keine Fragen. Ein Satz zu mehreren Stories landet ganz bei jeder. Der Daily-Bezug hängt an Stichwörtern. |
@@ -36,13 +38,18 @@ dass hier ein kleines lokales Modell läuft.
 ### 1. Ausführen statt auflisten
 
 Die größte Lücke. Die Systeme der großen Labs erledigen Aufgaben in einer
-Schleife aus Werkzeugaufruf, Prüfung und Korrektur. Hier endet die Kette bei
-„das würde dir helfen". Der nächste Schritt sind Agenten, die ein Ergebnis
-wirklich erstellen und in der Spalte `result` der Aufgabe ablegen:
+Schleife aus Werkzeugaufruf, Prüfung und Korrektur. Hier endete die Kette bei
+„das würde dir helfen".
 
+Stand 2026-11-19: Der Nachrichten-Agent ist der erste, der ein Ergebnis
+erstellt und in der Spalte `result` der Aufgabe ablegt. An ihm steht das
+Muster für alle weiteren: ausführen, selbst prüfen, zur Freigabe vorlegen, aus
+der Korrektur lernen. Als Nächstes:
+
+- den Nachrichten-Agenten messen und im Alltag erproben
+- Ersatztermin vorschlagen (braucht die freien Zeiten aus dem Kalender)
 - Entwurf einer Agenda für einen Termin
-- Entwurf der Nachricht, mit der ein Termin verschoben wird
-- Zusammenfassung einer Story fürs Refinement
+- Zusammenfassung einer Story fürs Refinement (braucht Kategorie 2)
 
 ### 2. Wissen heranholen
 
@@ -85,8 +92,10 @@ das Modell formuliert und ordnet zu. Dazu kommen:
 ### 5. Gedächtnis und Lernen
 
 Korrekturen des Nutzers sollen künftige Läufe ändern, zum Beispiel abgelehnte
-Aufgaben („für diese Serie nie eine Vorbereitung"). Heute merkt sich das System
-nur den Einzelfall.
+Aufgaben („für diese Serie nie eine Vorbereitung"). Der Nachrichten-Agent
+merkt sich Änderungswünsche auf Nachfrage als Vorgaben für alle künftigen
+Entwürfe (Tabelle `preferences`). Überall sonst merkt sich das System nur den
+Einzelfall.
 
 ### 6. Eigeninitiative
 
@@ -129,3 +138,7 @@ Ohne Messung ist nicht zu erkennen, ob die anderen Schritte etwas verbessern.
   Master und Story-Erkennung, wo es klar besser ist; `gpt-oss:20b` für alles
   andere, weil es bei Status-Agent und Terminart gleich gut und fünf- bis
   zehnmal schneller ist. Eingestellt wird das im Profil, nicht im Repo.
+- 2026-11-19: Reihenfolge geändert: erst der erste ausführende Agent
+  (Nachrichten-Agent), dann „Wissen heranholen". Die Nachricht braucht keine
+  Suche, und mit ihr steht das Freigabe-Muster, bevor die Inhalte schwieriger
+  werden.

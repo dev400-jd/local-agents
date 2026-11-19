@@ -24,6 +24,7 @@ Was in der Datenbank landet, entscheidet der Code. Das Modell waehlt nur den
 Zeitraum und kommentiert das Ergebnis.
 """
 
+import re
 import sys
 from collections import Counter
 from collections.abc import Callable
@@ -251,6 +252,24 @@ def move_title(event: Event, what: str, reason: str) -> str:
             f"(große Runde mit {len(event.attendee_domains)} Eingeladenen)"
         )
     return f"Nachricht an {who}: {what} verschieben, weil {reason}"
+
+
+# Arten von Verschiebe-Aufgaben, wie ``move_title`` sie formuliert.
+ASK, DECLINE, ANNOUNCE = "bitte", "absage", "ankuendigung"
+MOVE_TITLES = (
+    (ANNOUNCE, re.compile(r"^Selbst verschieben: .+, weil (?P<reason>.+)$")),
+    (DECLINE, re.compile(r"^Absage an (?P<who>.+?): .+, weil (?P<reason>.+?) \(große Runde mit \d+ Eingeladenen\)$")),
+    (ASK, re.compile(r"^Nachricht an (?P<who>.+?): .+ verschieben, weil (?P<reason>.+)$")),
+)
+
+
+def parse_move_title(title: str) -> tuple[str, str] | None:
+    """Art und Grund einer Verschiebe-Aufgabe aus ihrem Titel; None, wenn es keiner ist."""
+    for kind, pattern in MOVE_TITLES:
+        match = pattern.match(title)
+        if match:
+            return kind, match.group("reason")
+    return None
 
 
 def needs_task(event: Event, profile: Profile) -> bool:

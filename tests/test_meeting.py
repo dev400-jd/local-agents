@@ -147,9 +147,9 @@ class TestOrchestrator(MeetingCase):
 
     def test_other_kinds_of_tasks_stop_after_the_status(self) -> None:
         self.store.set_status(1, "erledigt")
-        self.store.upsert_task("d", "verschieben", "Nachricht an Erika Muster: Daily verschieben", "intern", date(2026, 11, 15), "planner")
+        self.store.add_task("manuell", "Angebot prüfen", "intern", date(2026, 11, 15), "rueckmeldung")
         output = self.run_chain(datetime(2026, 11, 15, 19, 0))
-        self.assertTrue(output.endswith("Für Aufgaben der Art „verschieben“ gibt es noch keinen Agenten, der sie weiterbearbeitet."), output)
+        self.assertTrue(output.endswith("Für Aufgaben der Art „manuell“ gibt es noch keinen Agenten, der sie weiterbearbeitet."), output)
         self.assertIsNone(self.store.brief(2))
 
     def test_nothing_to_do(self) -> None:

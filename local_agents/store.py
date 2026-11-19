@@ -1,6 +1,6 @@
 """Agenten-Datenbank: gemeinsamer Arbeitsstand aller Agenten in einer SQLite-Datei.
 
-Sechs Tabellen:
+Sieben Tabellen:
 
 - ``events``: Termine, wie der Planungs-Agent sie gesehen hat.
 - ``planned_days``: Tage, die schon geplant wurden; nur dort legt der
@@ -8,6 +8,7 @@ Sechs Tabellen:
 - ``tasks``: Aufgaben mit Fertig-bis-Datum, Status und Ergebnis.
 - ``briefs``: Einordnung des Termins hinter einer Aufgabe (Termin-Agent).
 - ``story_notes``: Bemerkungen des Nutzers zu User Stories, je Daily (Scrum Master).
+- ``preferences``: Vorgaben des Nutzers fuer einzelne Agenten, aus seinen Korrekturen.
 - ``runs``: Protokoll, welcher Agent wann lief.
 
 Die Datei liegt ausserhalb des Repos (Termintitel, Kundennamen). Agenten laufen
@@ -87,6 +88,12 @@ CREATE TABLE IF NOT EXISTS story_notes (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS story_notes_daily ON story_notes (daily_date, status);
+CREATE TABLE IF NOT EXISTS preferences (
+    id         INTEGER PRIMARY KEY,
+    agent      TEXT NOT NULL,             -- fuer welchen Agenten die Vorgabe gilt
+    text       TEXT NOT NULL,             -- die Vorgabe in den Worten des Nutzers
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS runs (
     id          INTEGER PRIMARY KEY,
     agent       TEXT NOT NULL,
@@ -461,6 +468,35 @@ class Store:
                 "UPDATE story_notes SET status = ? WHERE id = ?", (status, note_id)
             )
         return cursor.rowcount == 1
+
+    # --- Vorgaben des Nutzers
+
+    def add_preference(self, agent: str, text: str) -> int:
+        """Merkt eine Vorgabe des Nutzers fuer kuenftige Laeufe eines Agenten."""
+        with self.db:
+            return self.db.execute(
+                "INSERT INTO preferences (agent, text, created_at) VALUES (?, ?, ?)",
+                (agent, " ".join(text.split()), _now()),
+            ).lastrowid
+
+    def preferences(self, agent: str, limit: int = 5) -> list[str]:
+        """Die juengsten Vorgaben fuer einen Agenten, aelteste zuerst."""
+        rows = self.db.execute(
+            "SELECT text FROM preferences WHERE agent = ? ORDER BY id DESC LIMIT ?", (agent, limit)
+        ).fetchall()
+        return [row["text"] for row in reversed(rows)]
+
+    def remove_preference(self, agent: str, number: int) -> bool:
+        """Entfernt die Vorgabe mit dieser Nummer (wie von ``preference_rows`` gezeigt)."""
+        with self.db:
+            return self.db.execute(
+                "DELETE FROM preferences WHERE agent = ? AND id = ?", (agent, number)
+            ).rowcount == 1
+
+    def preference_rows(self, agent: str) -> list[tuple[int, str]]:
+        """Alle Vorgaben fuer einen Agenten mit ihrer Nummer."""
+        rows = self.db.execute("SELECT id, text FROM preferences WHERE agent = ? ORDER BY id", (agent,))
+        return [(row["id"], row["text"]) for row in rows]
 
     # --- Laeufe
 

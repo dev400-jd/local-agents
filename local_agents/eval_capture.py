@@ -7,6 +7,7 @@ Aufruf:
   python -m local_agents.evals merke status                    die jetzt offenen Aufgaben zur jetzigen Uhrzeit
   python -m local_agents.evals merke termin 12                 der Termin hinter Aufgabe #12
   python -m local_agents.evals merke stories datei.md          eine Markdown-Datei mit Stories
+  python -m local_agents.evals merke nachricht 18              die Verschiebe-Aufgabe #18 mit ihrem Termin
 
 Der Fall landet in ``<agent>-alltag.yaml`` im privaten Ordner der Messung
 (ausserhalb des Repos, weil er Termintitel und Story-Inhalte enthaelt). Als
@@ -25,6 +26,7 @@ from local_agents import evals, status_agent
 from local_agents.eval_suites import AGENTS, _key
 from local_agents.meeting_agent import role_in
 from local_agents.meeting_types import OTHER_TYPE, keyword_hint
+from local_agents.planner_agent import MOVE
 from local_agents.profile import CUSTOMER, INTERNAL, Profile, ProfileError, load_profile
 from local_agents.store import IN_PROGRESS, OPEN, Store
 
@@ -133,6 +135,29 @@ def termin_case(store: Store, profile: Profile, now: datetime, task_id: int) -> 
     }
 
 
+def nachricht_case(store: Store, profile: Profile, now: datetime, task_id: int) -> dict:
+    """Eine Verschiebe-Aufgabe mit ihrem Termin; die Erwartung traegt der Nutzer ein."""
+    task = next((task for task in store.tasks() if task.id == task_id), None)
+    event = None
+    if task is not None and task.event_id:
+        events = store.events(datetime.min.date(), datetime.max.date())
+        event = next((e for e in events if e.id == task.event_id), None)
+    if task is None or event is None or task.kind != MOVE:
+        raise CaptureError(f"Aufgabe #{task_id} ist keine Verschiebe-Aufgabe mit Termin.")
+    return {
+        "name": _name(now, event.title),
+        "inputs": {
+            "umgebung": {"absender": profile.name or "Absender", "anrede": profile.message_form},
+            "aufgabe": task.title,
+            "titel": event.title,
+            "beginn": event.start,
+            "organisator": event.organizer,
+            "vorgaben": store.preferences("nachricht"),
+        },
+        "evaluators": [{"Nachricht": {"nennt": [], "nennt_nicht": [], "eines_von": []}}],
+    }
+
+
 def stories_case(now: datetime, path: str) -> dict:
     """Eine Datei mit Kuerzeln: Erkennt das Modell die Stories auch ohne die Kuerzel?"""
     file = Path(path).expanduser().resolve()
@@ -195,12 +220,16 @@ def main(args: list[str]) -> int:
             case = feedback_case(store, now, argument)
         elif agent == "status":
             case = status_case(store, now)
-        elif agent == "termin":
+        elif agent in ("termin", "nachricht"):
             if not argument.lstrip("#").isdigit():
-                raise CaptureError("Gib die Nummer der Aufgabe an, etwa: merke termin 12")
-            case = termin_case(store, profile, now, int(argument.lstrip("#")))
-        else:
+                raise CaptureError(f"Gib die Nummer der Aufgabe an, etwa: merke {agent} 12")
+            number = int(argument.lstrip("#"))
+            build = termin_case if agent == "termin" else nachricht_case
+            case = build(store, profile, now, number)
+        elif agent == "stories":
             case = stories_case(now, argument)
+        else:
+            raise CaptureError(f"Für {agent} gibt es noch kein Festhalten.")
         path = append_case(agent, case, evals.private_dir())
     except (CaptureError, evals.CaseError) as exc:
         print(exc, file=sys.stderr)

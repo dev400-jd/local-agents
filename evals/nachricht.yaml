@@ -1,0 +1,109 @@
+# yaml-language-server: $schema=nachricht_schema.json
+# Erfundene Fälle für den Nachrichten-Agenten: Entwurf zu einer Verschiebe-Aufgabe.
+# Aufbau: README, Abschnitt "Messen". Immer geprüft wird, dass das Modell den
+# Entwurf selbst geschrieben hat und die Selbstprüfung des Agenten nichts findet
+# (Termin, Datum, Anrede, keine erfundene Zahl, kein Platzhalter).
+# "aufgabe" ist der Titel, wie der Planungs-Agent ihn schreibt; daraus liest der
+# Agent Art und Grund der Nachricht.
+name: nachricht
+cases:
+- name: "Bitte um Verschiebung wegen Kundentag"
+  inputs:
+    umgebung: &du {absender: "Alex Beispiel", anrede: du}
+    aufgabe: "Nachricht an Erika Muster: Jour fixe (Mi 18.11. 10:00) verschieben, weil Kundentag Kunde ACME"
+    titel: "Jour fixe"
+    beginn: 2026-11-18T10:00:00
+    organisator: "Erika Muster"
+  evaluators:
+  - Nachricht:
+      nennt: ["Erika", "Alex"]
+      eines_von: ["verschieb", "verleg", "anderen Tag", "anderen Termin"]
+      nennt_nicht: ["ACME", "Kundentag Kunde"]
+- name: "Bitte um Verschiebung wegen Auslastung im Projekt"
+  inputs:
+    umgebung: *du
+    aufgabe: "Nachricht an Kim Beispiel: Teamrunde (Di 17.11. 09:30) verschieben, weil interner Block 09:00-12:00, Stresslevel hoch bei Kunde ACME"
+    titel: "Teamrunde"
+    beginn: 2026-11-17T09:30:00
+    organisator: "Kim Beispiel"
+  evaluators:
+  - Nachricht:
+      nennt: ["Kim"]
+      eines_von: ["verschieb", "verleg", "anderen Tag", "anderen Termin"]
+      nennt_nicht: ["Stresslevel", "ACME", "12:00"]
+- name: "Organisator steht als Nachname, Vorname im Kalender"
+  inputs:
+    umgebung: *du
+    aufgabe: "Nachricht an Muster, Erika: Architekturrunde (Mi 18.11. 14:00) verschieben, weil Kundentag Kunde ACME"
+    titel: "Architekturrunde"
+    beginn: 2026-11-18T14:00:00
+    organisator: "Muster, Erika"
+  evaluators:
+  - Nachricht:
+      nennt: ["Erika"]
+      nennt_nicht: ["Muster"]
+- name: "Organisator unbekannt"
+  inputs:
+    umgebung: *du
+    aufgabe: "Nachricht an Organisator: Budgetplanung (Mi 18.11. 11:00) verschieben, weil Kundentag Kunde ACME"
+    titel: "Budgetplanung"
+    beginn: 2026-11-18T11:00:00
+  evaluators:
+  - Nachricht:
+      eines_von: ["verschieb", "verleg", "anderen Tag", "anderen Termin"]
+      nennt_nicht: ["Organisator", "Name unbekannt"]
+- name: "Absage an eine große Runde"
+  inputs:
+    umgebung: *du
+    aufgabe: "Absage an Sam Beispiel: Quartalsauftakt (Mi 18.11. 13:00), weil Kundentag Kunde ACME (große Runde mit 40 Eingeladenen)"
+    titel: "Quartalsauftakt"
+    beginn: 2026-11-18T13:00:00
+    organisator: "Sam Beispiel"
+  evaluators:
+  - Nachricht:
+      nennt: ["Sam"]
+      eines_von: ["nicht teilnehmen", "nicht dabei", "absage", "absagen", "ohne mich", "nicht kommen"]
+      nennt_nicht: ["40"]
+- name: "Eigenen Termin verschieben: Ankündigung an alle"
+  inputs:
+    umgebung: *du
+    aufgabe: "Selbst verschieben: Wissensaustausch Datenplattform (Mi 18.11. 15:00), weil Kundentag Kunde ACME"
+    titel: "Wissensaustausch Datenplattform"
+    beginn: 2026-11-18T15:00:00
+    organisator: "Alex Beispiel"
+  evaluators:
+  - Nachricht:
+      eines_von: ["verschieb", "verschob", "verleg"]
+      nennt_nicht: ["Hallo Alex"]
+- name: "Titel mit Sonderzeichen bleibt wörtlich"
+  inputs:
+    umgebung: *du
+    aufgabe: "Nachricht an Erika Muster: Sync: Daten & KI (wöchentlich) (Mi 18.11. 09:00) verschieben, weil Kundentag Kunde ACME"
+    titel: "Sync: Daten & KI (wöchentlich)"
+    beginn: 2026-11-18T09:00:00
+    organisator: "Erika Muster"
+  evaluators:
+  - Nachricht:
+      nennt: ["Erika"]
+- name: "Förmliche Anrede"
+  inputs:
+    umgebung: {absender: "Alex Beispiel", anrede: Sie}
+    aufgabe: "Nachricht an Erika Muster: Jour fixe (Mi 18.11. 10:00) verschieben, weil Kundentag Kunde ACME"
+    titel: "Jour fixe"
+    beginn: 2026-11-18T10:00:00
+    organisator: "Erika Muster"
+  evaluators:
+  - Nachricht:
+      eines_von: ["Sie", "Ihnen"]
+- name: "Gemerkte Vorgabe wird eingehalten"
+  inputs:
+    umgebung: *du
+    aufgabe: "Nachricht an Erika Muster: Jour fixe (Mi 18.11. 10:00) verschieben, weil Kundentag Kunde ACME"
+    titel: "Jour fixe"
+    beginn: 2026-11-18T10:00:00
+    organisator: "Erika Muster"
+    vorgaben: ["Nie das Wort leider verwenden.", "Am Ende mit Danke und Gruß schließen."]
+  evaluators:
+  - Nachricht:
+      nennt: ["Danke"]
+      nennt_nicht: ["leider"]

@@ -13,7 +13,9 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_evals import Case
 
 from local_agents import eval_suites as suites
-from local_agents import evals
+from local_agents import evals, message_agent
+from local_agents.profile import Profile
+from local_agents.store import StoredEvent, Task
 from local_agents.testing import structured_reply
 
 models.ALLOW_MODEL_REQUESTS = False
@@ -303,6 +305,33 @@ class TestStoryDetection(unittest.TestCase):
         self.assertEqual(output.erkannt, [])
 
 
+class TestMessageGrader(unittest.TestCase):
+    def request_of(self, case: Case) -> message_agent.Request:
+        inputs = case.inputs
+        task = Task(1, "e", "verschieben", inputs.aufgabe, "intern", inputs.beginn.date(), "offen", "", "")
+        event = StoredEvent("e", inputs.titel, inputs.beginn, inputs.beginn, "intern", organizer=inputs.organisator)
+        profile = Profile(name=inputs.umgebung.absender, message_form=inputs.umgebung.anrede)
+        return message_agent.build_request(task, event, profile)
+
+    def test_repo_cases_pass_with_a_correct_draft_and_fail_on_the_fallback(self) -> None:
+        for case in evals.load_cases([evals.REPO_CASES])["nachricht"]:
+            if case.inputs.vorgaben:
+                continue  # die Vorlage kennt keine Vorgaben
+            text = message_agent.template(self.request_of(case))
+            self.assertEqual(problems("nachricht", case, saying(text)), [], case.name)
+            failed = problems("nachricht", case, saying("Geht nicht."))
+            self.assertIn("Rückfall auf die Vorlage", failed[0], case.name)
+
+    def test_required_and_forbidden_wording(self) -> None:
+        case = evals.load_cases([evals.REPO_CASES])["nachricht"][0]
+        text = message_agent.template(self.request_of(case)).replace("Kunden vor Ort", "Kunden ACME vor Ort")
+        self.assertIn("„ACME“ gehört nicht in den Entwurf", problems("nachricht", case, saying(text))[0])
+        check = suites.Nachricht(eines_von=["absage", "nicht dabei"])
+        plain = Case(name="Fall", inputs=case.inputs, evaluators=(check,))
+        good = message_agent.template(self.request_of(case))
+        self.assertIn("keines von absage, nicht dabei im Entwurf", problems("nachricht", plain, saying(good))[0])
+
+
 class TestRunAndReport(unittest.TestCase):
     def test_runs_are_repeated_and_a_broken_model_counts_as_failed_run(self) -> None:
         calls = []
@@ -411,7 +440,7 @@ cases:
 class TestCaseFiles(unittest.TestCase):
     def test_repo_cases_load_and_cover_both_agents(self) -> None:
         cases = evals.load_cases([evals.REPO_CASES])
-        self.assertEqual(sorted(cases), ["rueckmeldung", "scrum_master", "status", "stories", "termin"])
+        self.assertEqual(sorted(cases), ["nachricht", "rueckmeldung", "scrum_master", "status", "stories", "termin"])
         self.assertGreaterEqual(len(cases["scrum_master"]), 15)
         self.assertGreaterEqual(len(cases["rueckmeldung"]), 12)
 

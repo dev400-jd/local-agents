@@ -34,8 +34,12 @@ Bestandene Läufe von allen Läufen; je Fall fünf Läufe, bei der Terminart zwe
 | Status-Agent | 9 | 45 von 45, 1 bis 2 s | 45 von 45, 8 bis 14 s |
 | Terminart | 13 | 24 von 26, 3 bis 18 s | Abbruch nach 10 bestandenen Läufen (rund 50 s je Lauf): Speichermangel |
 | Story-Erkennung | 5 | 19 von 25, unter 1 s | 25 von 25, 8 bis 21 s |
+| Nachrichten-Agent | 9 | 43 von 45, 2 bis 5 s | 42 von 45, 24 bis 70 s |
 
-Die Zahlen gelten nach den Korrekturen aus dem nächsten Abschnitt. Die Spannen
+Die Zahlen gelten nach den Korrekturen aus dem nächsten Abschnitt. Beim
+Nachrichten-Agenten (gemessen am 19.11.) lagen alle fünf gescheiterten Läufe an
+zu strengen Erwartungen der Fälle („Hi Erika" statt „Hallo Erika", „verschoben"
+statt „verschieben"); die Fälle sind gelockert, aber nicht nachgemessen. Die Spannen
 bei `gpt-oss:20b` stammen aus mehreren Messläufen desselben Stands.
 
 ## Gefundene Schwächen und was daraus wurde

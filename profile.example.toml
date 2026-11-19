@@ -65,6 +65,11 @@ sync = true
 notify = true    # macOS-Mitteilung
 speak = false    # zusaetzlich vorlesen
 
+# Nachrichten-Agent (python -m local_agents.message_agent): Anrede in den
+# Entwuerfen, "du" oder "Sie". Der Gruss am Ende nimmt den Vornamen aus [person].
+[messages]
+form = "du"
+
 # Nach dem Planen liest der Planungs-Agent eine kurze Uebersicht vor.
 # Stimmen anzeigen: say -v '?' | grep de_DE
 # model ist die Piper-Stimme; sie wird beim ersten Gebrauch heruntergeladen.
