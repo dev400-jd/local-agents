@@ -10,7 +10,7 @@ from local_agents import sync
 from local_agents.calendar_events import CalendarAccessError, Event
 from local_agents.planner_agent import plan_events
 from local_agents.profile import Context, Profile
-from local_agents.store import DISCARDED, DONE, OPEN, REJECTED, Store
+from local_agents.store import DISCARDED, DONE, IN_PROGRESS, OPEN, REJECTED, Store
 
 PROFILE = Profile(
     contexts=(Context("intern", "intern", "Intern", domains=frozenset({"beispiel.de"})),)
@@ -148,10 +148,33 @@ class TestSync(SyncCase):
             ["Vorbereitung: Jour fixe", "Vorbereitung: Neu"],
         )
 
-    def test_past_meetings_are_left_alone(self) -> None:
-        self.plan([meeting(16, "09:00", "Daily"), meeting(18, "10:00", "Jour fixe")])
-        self.sync([meeting(18, "10:00", "Jour fixe")], now=datetime(2026, 11, 17, 8, 0))
-        self.assertEqual([task.status for task in self.store.tasks()], [OPEN, OPEN])
+    def test_started_meetings_lose_their_unfinished_tasks(self) -> None:
+        events = [
+            meeting(16, "09:00", "Daily"),
+            meeting(16, "11:00", "Abgeschlossen"),
+            meeting(17, "07:30", "Heute früh"),
+            meeting(18, "10:00", "Jour fixe"),
+        ]
+        self.plan(events)
+        self.store.set_status(2, DONE)
+        now = datetime(2026, 11, 17, 8, 0)
+        plan = self.sync(events[2:], now=now)
+        self.assertEqual(
+            [task.status for task in self.store.tasks()], [DISCARDED, DONE, DISCARDED, OPEN]
+        )
+        self.assertEqual(plan.discarded, 2)
+        # Der zweite Abgleich laesst die verworfenen Aufgaben nicht wieder aufleben.
+        again = self.sync(events[2:], now=now)
+        self.assertEqual(sync.sync_lines(again), [])
+        self.assertEqual(
+            [task.status for task in self.store.tasks()], [DISCARDED, DONE, DISCARDED, OPEN]
+        )
+
+    def test_meeting_moved_to_later_today_keeps_its_task(self) -> None:
+        self.plan([meeting(17, "07:30", "Heute früh", uid="a")])
+        self.store.set_status(1, IN_PROGRESS)
+        plan = self.sync([meeting(17, "15:00", "Heute früh", uid="a")], now=datetime(2026, 11, 17, 8, 0))
+        self.assertEqual((self.task().status, plan.discarded, len(plan.moves)), (IN_PROGRESS, 0, 1))
 
     def test_nothing_planned_reads_no_calendar(self) -> None:
         def fail(start: date, end: date) -> list[Event]:

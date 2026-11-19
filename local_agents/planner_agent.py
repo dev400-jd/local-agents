@@ -158,7 +158,8 @@ def plan_events(
     Ausserhalb zaehlen nur Termine, die die Datenbank schon kennt, etwa weil
     sie dorthin verschoben wurden. Neue Termine bekommen Aufgaben nur an Tagen,
     fuer die ``plannable`` gilt (Standard: der Zeitraum), und mit ``now`` nur,
-    wenn sie noch nicht begonnen haben.
+    wenn sie noch nicht begonnen haben; Aufgaben begonnener Termine bleiben,
+    wie sie sind.
     """
 
     def context_of(event: Event) -> str:
@@ -214,6 +215,11 @@ def plan_events(
                 event.organizer,
             )
         )
+        kept.add(event_id)
+        if now is not None and event.start <= now:
+            # Der Termin laeuft oder ist vorbei: Seine Aufgaben sind hinfaellig
+            # und sollen nicht wieder aufleben.
+            continue
         what = f"{event.title.strip()} ({WEEKDAYS[day.weekday()]} {event.start:%d.%m. %H:%M})"
         due = day - timedelta(days=profile.lead_days)
         counts[store.upsert_task(event_id, PREPARATION, f"Vorbereitung: {what}", context, due, AGENT_NAME)] += 1
@@ -231,7 +237,6 @@ def plan_events(
         else:
             # Der Termin muss nicht mehr weichen (Profil oder Kalender geaendert).
             discarded += store.discard_task(event_id, MOVE)
-        kept.add(event_id)
     discarded += store.drop_events(start, end, kept)
     tasks = [
         task

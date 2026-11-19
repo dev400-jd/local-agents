@@ -326,6 +326,15 @@ class Store:
             )
         return cursor.rowcount == 1
 
+    def discard_started(self, now: datetime) -> int:
+        """Verwirft unerledigte Aufgaben, deren Termin schon begonnen hat; gibt ihre Zahl zurueck."""
+        with self.db:
+            return self.db.execute(
+                "UPDATE tasks SET status = ?, updated_at = ? WHERE status IN (?, ?) "
+                "AND event_id IN (SELECT id FROM events WHERE start <= ?)",
+                (DISCARDED, _now(), OPEN, IN_PROGRESS, now.isoformat()),
+            ).rowcount
+
     def tasks(
         self,
         statuses: tuple[str, ...] | None = None,

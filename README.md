@@ -533,6 +533,12 @@ Für Termine ab heute gilt:
   schon geplant wurden, und nur, wenn er noch nicht begonnen hat. Ungeplante
   Wochen bleiben dem Planungs-Agenten überlassen.
 
+Dazu räumt der Abgleich auf, auch für frühere Tage: Hat ein Termin begonnen,
+werden seine unerledigten Aufgaben verworfen, denn Vorbereitung oder Nachricht
+kämen zu spät. Erledigte und abgelehnte Aufgaben bleiben stehen. Die Stufe
+`hinfällig` des Status-Agenten greift damit nur noch, wenn der Abgleich
+abgeschaltet oder der Kalender nicht lesbar ist.
+
 Einen verschobenen Termin erkennt der Abgleich so wieder:
 
 | Fall | Erkennungsmerkmal |

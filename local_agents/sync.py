@@ -11,11 +11,14 @@ Was er tut, fuer Termine ab heute:
 - verschobene Termine: Die Aufgabe bleibt mit Status und Einordnung erhalten,
   Titel und Fertig-bis-Datum ziehen nach.
 - abgesagte Termine: Offene Aufgaben werden verworfen.
+- begonnene Termine, auch aus frueheren Tagen: Unerledigte Aufgaben werden
+  verworfen, denn Vorbereitung oder Nachricht kaemen zu spaet.
 - neue Termine an schon geplanten Tagen: Sie bekommen Aufgaben wie beim Planen.
   Ungeplante Wochen bleiben dem Planungs-Agenten ueberlassen.
 """
 
 import sys
+from dataclasses import replace
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 
@@ -46,6 +49,7 @@ def sync(
     planned = store.planned_days(today)
     known = store.events(today, date.max)
     if not planned and not known:
+        store.discard_started(now)
         return None
     end = max([*planned, *(event.start.date() for event in known)])
     events = fetch(today, end + LOOKAHEAD)
@@ -53,9 +57,12 @@ def sync(
         # Ein leerer Kalender heisst fast immer, dass das Konto gerade nicht
         # geladen ist. Dann nicht alle Aufgaben verwerfen.
         raise SyncSkipped("Der Kalender liefert keine Termine.")
-    return plan_events(
+    plan = plan_events(
         events, profile, store, today, end, today, now=now, plannable=planned.__contains__
     )
+    # Erst jetzt, mit den Beginnzeiten aus dem Kalender: Ein Termin, der auf
+    # spaeter verlegt wurde, hat noch nicht begonnen.
+    return replace(plan, discarded=plan.discarded + store.discard_started(now))
 
 
 def _when(moment: datetime) -> str:
