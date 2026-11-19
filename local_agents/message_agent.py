@@ -145,14 +145,28 @@ def build_request(task: Task, event: StoredEvent | None, profile: Profile) -> Re
     )
 
 
+FORMS = {
+    "du": "du (dir, dich, dein)",
+    "Sie": "Sie (förmlich: Sie, Ihnen, Ihr; nie du, dir oder dein)",
+}
+
+
+def greeting(request: Request) -> str:
+    """Die erste Zeile der Nachricht; der Code legt sie fest, nicht das Modell."""
+    if request.recipient:
+        return f"Hallo {request.recipient},"
+    return "Hallo zusammen," if request.kind == ANNOUNCE else "Hallo,"
+
+
 def facts(request: Request) -> str:
     """Die Angaben fuer das Modell, eine je Zeile."""
     if request.recipient:
-        recipient = f"{request.recipient} (Anrede mit Vornamen)"
+        recipient = request.recipient
     elif request.kind == ANNOUNCE:
-        recipient = "alle Eingeladenen (Anrede: Hallo zusammen)"
+        recipient = "alle Eingeladenen"
     else:
-        recipient = "Name unbekannt (Anrede ohne Namen: Hallo)"
+        recipient = "Name unbekannt"
+    recipient += f" (die Nachricht beginnt wörtlich mit: {greeting(request)})"
     return "\n".join(
         [
             f"Art der Nachricht: {KINDS[request.kind]}",
@@ -160,7 +174,7 @@ def facts(request: Request) -> str:
             f"Termin: „{request.title}“ am {request.when}",
             f"Grund: {request.why}",
             f"Absender: {request.sender or 'ohne Namen, Gruß ohne Unterschrift'}",
-            f"Anrede: {request.form}",
+            f"Anrede im Text: {FORMS.get(request.form, request.form)}",
         ]
     )
 
@@ -201,9 +215,7 @@ def problems(text: str, request: Request) -> list[str]:
 def template(request: Request) -> str:
     """Feste Vorlage, falls das Modell keinen brauchbaren Entwurf liefert."""
     polite = request.form == "Sie"
-    hello = f"Hallo {request.recipient}," if request.recipient else (
-        "Hallo zusammen," if request.kind == ANNOUNCE else "Hallo,"
-    )
+    hello = greeting(request)
     meeting = f"„{request.title}“ am {request.when}"
     if request.kind == ASK:
         ask = "Könnten Sie ihn" if polite else "Könntest du ihn"

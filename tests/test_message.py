@@ -161,7 +161,7 @@ class TestDraft(MessageCase):
         result = agent.draft(self.task, EVENT, PROFILE, self.store, writing(GOOD, seen=seen))
         self.assertEqual((result.text, result.source, result.stored), (GOOD, agent.MODEL, False))
         self.assertEqual((self.task.status, self.task.result), (IN_PROGRESS, GOOD))
-        self.assertIn("Empfänger: Erika (Anrede mit Vornamen)", seen[0])
+        self.assertIn("Empfänger: Erika (die Nachricht beginnt wörtlich mit: Hallo Erika,)", seen[0])
         self.assertEqual(self.store.runs()[0]["agent"], "nachricht")
         again = agent.draft(self.task, EVENT, PROFILE, self.store, None)  # braucht kein Modell
         self.assertEqual((again.text, again.stored), (GOOD, True))
