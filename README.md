@@ -771,7 +771,8 @@ Der Ablauf in vier Schritten:
    ans Modell zurück (bis zu dreimal). Geprüft wird: Titel und Datum des
    Termins genannt, keine Zahl, die nicht in den Angaben steht (also kein
    erfundener Ersatztermin), kein Platzhalter in Klammern, Anrede mit dem
-   Vornamen, du oder Sie durchgehend, 60 bis 700 Zeichen; bei einer Bitte an
+   Vornamen, du oder Sie durchgehend, Grußformel am Schluss vor dem Namen,
+   60 bis 700 Zeichen; bei einer Bitte an
    den Organisator außerdem, dass die Nachricht ihn wirklich bittet, statt zu
    behaupten, du würdest den Termin selbst verschieben. Gelingt es dem
    Modell nicht, gilt eine feste Vorlage; die Ausgabe weist darauf hin.

@@ -116,10 +116,20 @@ class TestSelfCheck(unittest.TestCase):
             GOOD.replace("Könntest du ihn", "Könnten Sie ihn"): "förmliche Anrede",
             "Hallo Erika, Jour fixe am 18.11. um 10:00 geht nicht.": "Länge",
             GOOD.replace("Könntest du ihn auf einen anderen Tag legen?", "Ich verschiebe ihn auf einen anderen Tag."): "die Bitte fehlt",
+            GOOD.replace("Viele Grüße", "").rstrip(): "die Grußformel am Schluss fehlt",
         }
         for text, expected in flaws.items():
             found = agent.problems(text, self.request)
             self.assertTrue(any(expected in problem for problem in found), (expected, found))
+
+    def test_closings_that_count(self) -> None:
+        body = GOOD[: GOOD.index("Viele Grüße")]
+        for closing in ("Viele Grüße\nAlex", "Beste Grüße, Alex", "Danke, Alex", "LG Alex", "Gruß\nAlex", "Viele Grüße"):
+            self.assertTrue(agent.has_closing(body + closing, "Alex"), closing)
+        # Ein Gruss am Anfang oder ein Dank mitten im Text ist kein Schluss.
+        early = body.replace("Hallo Erika", "Grüße dich Erika, danke vorab") + "Alex"
+        self.assertFalse(agent.has_closing(early, "Alex"))
+        self.assertFalse(agent.has_closing(body + "Ein neuer Terminvorschlag folgt.\n\nAlex", "Alex"))
 
     def test_formal_address_is_checked_the_other_way_round(self) -> None:
         formal = agent.Request(ASK, "Erika", "Jour fixe", START, self.request.why, "Alex", form="Sie")

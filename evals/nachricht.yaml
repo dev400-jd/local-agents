@@ -2,7 +2,7 @@
 # Erfundene Fälle für den Nachrichten-Agenten: Entwurf zu einer Verschiebe-Aufgabe.
 # Aufbau: README, Abschnitt "Messen". Immer geprüft wird, dass das Modell den
 # Entwurf selbst geschrieben hat und die Selbstprüfung des Agenten nichts findet
-# (Termin, Datum, Anrede, keine erfundene Zahl, kein Platzhalter).
+# (Termin, Datum, Anrede, Grußformel, keine erfundene Zahl, kein Platzhalter).
 # "aufgabe" ist der Titel, wie der Planungs-Agent ihn schreibt; daraus liest der
 # Agent Art und Grund der Nachricht.
 name: nachricht
@@ -75,6 +75,18 @@ cases:
   - Nachricht:
       eines_von: ["verschieb", "verschob", "verleg"]
       nennt_nicht: ["Hallo Alex"]
+- name: "Eigenen Termin verschieben wegen Auslastung im Projekt"
+  inputs:
+    umgebung: *du
+    aufgabe: "Selbst verschieben: Angebot Datenanalyse - Entwicklung (Di 24.11. 16:30), weil interner Block 16:30-17:30, Stresslevel hoch bei Kunde ACME"
+    titel: "Angebot Datenanalyse - Entwicklung"
+    beginn: 2026-11-24T16:30:00
+    organisator: "Alex Beispiel"
+  evaluators:
+  - Nachricht:
+      nennt: ["zusammen"]
+      eines_von: ["verschieb", "verschob", "verleg"]
+      nennt_nicht: ["Stresslevel", "ACME", "17:30"]
 - name: "Titel mit Sonderzeichen bleibt wörtlich"
   inputs:
     umgebung: *du

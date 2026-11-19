@@ -12,7 +12,7 @@ Der erste Agent, der eine Aufgabe erledigt statt sie nur zu nennen. Der Ablauf:
 1. Ausfuehren: Das Modell schreibt die Nachricht aus Angaben, die der Code
    zusammenstellt (Termin, Empfaenger, Grund, Art der Nachricht).
 2. Selbst pruefen: Der Code prueft den Entwurf (Termin und Datum genannt,
-   keine erfundene Zahl, kein Platzhalter, richtige Anrede) und schickt ihn bei
+   keine erfundene Zahl, kein Platzhalter, richtige Anrede, Grußformel) und schickt ihn bei
    Maengeln zurueck ans Modell. Gelingt es nicht, gilt eine feste Vorlage.
 3. Freigeben: Du uebernimmst den Entwurf, aenderst ihn mit einem Wunsch in
    eigenen Worten, verwirfst ihn oder lehnst die Aufgabe ab.
@@ -69,6 +69,17 @@ class MeetingStarted(NoMessageTask):
 
 # Wendungen, an denen eine Bitte an den Organisator zu erkennen ist.
 ASKING = re.compile(r"\?|\bbitte\b|\bkönntest\b|\bkannst du\b|\bkönnten sie\b|\bwäre es möglich\b", re.IGNORECASE)
+# Grussformel am Schluss, vor dem Namen des Absenders.
+CLOSING = re.compile(r"gr[uü](ß|ss)e?n?\b|\bdanke?\b|\b[lmv]fg\b|\b[lv]g\b|\bbis (bald|dann)\b", re.IGNORECASE)
+CLOSING_TAIL = 45  # so viele Zeichen vor dem Namen zaehlen als Schluss
+
+
+def has_closing(text: str, sender: str) -> bool:
+    """Ob die Nachricht mit einer Grussformel schliesst, nicht nur mit dem Namen."""
+    end = text.rstrip().rstrip(".!,")
+    if sender and end.casefold().endswith(sender.casefold()):
+        end = end[: -len(sender)]
+    return bool(CLOSING.search(end[-CLOSING_TAIL:]))
 
 
 @dataclass(frozen=True)
@@ -175,6 +186,11 @@ def problems(text: str, request: Request) -> list[str]:
             "die Bitte fehlt: Den Termin kann nur der Empfänger verlegen, also ihn darum bitten "
             "(etwa „Könntest du ihn auf einen anderen Tag legen?“)"
         )
+    if not has_closing(text, request.sender):
+        found.append(
+            "die Grußformel am Schluss fehlt: vor dem Namen des Absenders mit einem Gruß "
+            "schließen (etwa „Viele Grüße“)"
+        )
     if request.form == "du" and FORMAL.search(text):
         found.append("förmliche Anrede (Sie, Ihnen), verlangt ist du")
     if request.form == "Sie" and INFORMAL.search(text):
@@ -216,8 +232,8 @@ def instructions(ctx: RunContext[MessageDeps]) -> str:
     deps = ctx.deps
     text = (
         "Du schreibst für den Absender eine kurze Nachricht an einen Kollegen, wie man "
-        "sie im Firmenchat schickt: Anrede, drei bis fünf Sätze, Gruß mit dem Vornamen "
-        "des Absenders. Gib nur den Text der Nachricht aus, ohne Betreff und ohne "
+        "sie im Firmenchat schickt: Anrede, drei bis fünf Sätze, zum Schluss eine Grußformel "
+        "(etwa „Viele Grüße“) und danach der Vorname des Absenders. Gib nur den Text der Nachricht aus, ohne Betreff und ohne "
         "Erklärung. Regeln:\n"
         "- Schreibe in der Ich-Form des Absenders, freundlich und ohne Floskeln.\n"
         "- Nenne den Termin mit seinem Titel wörtlich und mit Datum und Uhrzeit, genau "

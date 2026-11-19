@@ -628,7 +628,8 @@ class Nachricht(Evaluator[NachrichtInputs, NachrichtOutput, Any]):
 
     Immer geprueft: Das Modell hat den Entwurf selbst geschrieben (kein
     Rueckfall auf die Vorlage), und die Selbstpruefung des Agenten findet
-    nichts (Termin, Datum, Anrede, keine erfundene Zahl, kein Platzhalter).
+    nichts (Termin, Datum, Anrede, Grussformel, keine erfundene Zahl, kein
+    Platzhalter).
     ``nennt`` / ``nennt_nicht``: Textstuecke. ``eines_von``: Mindestens eines
     dieser Textstuecke muss vorkommen (etwa Wendungen fuer eine Absage).
     """
