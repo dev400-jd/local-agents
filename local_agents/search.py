@@ -10,7 +10,9 @@ Durchsucht werden:
   Abschnitt ein Eintrag),
 - deine Bemerkungen aus dem Scrum Master (ohne die entfernten),
 - die Einordnungen des Termin-Agenten,
-- uebernommene Nachrichten des Nachrichten-Agenten.
+- uebernommene Nachrichten des Nachrichten-Agenten,
+- die gespiegelten Asana-Aufgaben mit ihren Kommentaren, wenn es den Spiegel
+  gibt (asana_mirror.py).
 
 Der Index ist eine eigene SQLite-Datei neben der Agenten-Datenbank. Er ist
 abgeleitet: Loeschen schadet nicht, der naechste Aufruf baut ihn neu. Vor jeder
@@ -35,11 +37,13 @@ import sys
 from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from datetime import date, datetime
 from pathlib import Path
 
 import numpy as np
 
 from local_agents import stories
+from local_agents.asana_mirror import Mirror, mirror_path
 from local_agents.meeting_types import BY_ID
 from local_agents.profile import Profile, ProfileError, load_profile
 from local_agents.planner_agent import MOVE
@@ -47,12 +51,14 @@ from local_agents.store import DONE, NOTE_REMOVED, Store, db_path
 
 AGENT_NAME = "suche"
 STORY, SECTION, REMARK, BRIEF, MESSAGE = "story", "abschnitt", "bemerkung", "einordnung", "nachricht"
+ASANA = "asana"
 KIND_LABELS = {
     STORY: "Story",
     SECTION: "Abschnitt",
     REMARK: "Bemerkung",
     BRIEF: "Einordnung",
     MESSAGE: "Nachricht",
+    ASANA: "Asana-Aufgabe",
 }
 DEFAULT_LIMIT = 5
 # Laengere Eintraege werden an Absaetzen geteilt, damit ein Treffer in den
@@ -243,12 +249,14 @@ def split_text(text: str, limit: int = MAX_PASSAGE_CHARS) -> list[str]:
     return parts
 
 
-def _pieces(ref: str, kind: str, title: str, text: str, **extra) -> list[Passage]:
-    parts = split_text(text)
+def _pieces(ref: str, kind: str, title: str, text: str, head: str = "", **extra) -> list[Passage]:
+    """Der Eintrag, bei langem Text in Teilen. ``head`` steht vor jedem Teil."""
+    parts = split_text(text, MAX_PASSAGE_CHARS - len(head)) if head else split_text(text)
+    lead = f"{head}\n\n" if head else ""
     if len(parts) <= 1:
-        return [Passage(ref, kind, title, parts[0] if parts else "", **extra)]
+        return [Passage(ref, kind, title, (lead + parts[0]) if parts else head, **extra)]
     return [
-        Passage(f"{ref}/{number}", kind, f"{title} (Teil {number} von {len(parts)})", part, group=ref, **extra)
+        Passage(f"{ref}/{number}", kind, f"{title} (Teil {number} von {len(parts)})", lead + part, group=ref, **extra)
         for number, part in enumerate(parts, start=1)
     ]
 
@@ -338,12 +346,80 @@ def store_passages(store: Store, profile: Profile) -> list[Passage]:
     return found
 
 
-def collect(profile: Profile, store: Store) -> list[Passage]:
-    """Alles, was durchsuchbar sein soll, aus den Quellen des Profils."""
+def _day(stamp: str) -> str:
+    """ISO-Datum oder -Zeitpunkt als "24.11.2026"; Unverstaendliches bleibt, wie es ist."""
+    try:
+        if "T" in stamp:
+            return datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone().strftime("%d.%m.%Y")
+        return date.fromisoformat(stamp).strftime("%d.%m.%Y")
+    except ValueError:
+        return stamp
+
+
+def asana_passages(mirror: Mirror, profile: Profile) -> list[Passage]:
+    """Je gespiegelter Asana-Aufgabe ein Eintrag: Stand, Beschreibung, Felder, Kommentare."""
+    found: list[Passage] = []
+    for task in mirror.tasks():
+        state = "erledigt" if task.completed else "offen"
+        if task.due:
+            state += f", fällig {_day(task.due)}"
+        lines = [f"Stand: {state}"]
+        if task.assignee:
+            lines.append(f"Zuständig: {task.assignee}")
+        for project, section in task.projects:
+            lines.append(f"Projekt: {project}" + (f", Abschnitt: {section}" if section else ""))
+        if task.parent:
+            lines.append(f"Unteraufgabe von: {task.parent}")
+        if task.subtasks:
+            lines.append(f"Unteraufgaben: {task.subtasks}")
+        lines += [f"{name}: {value}" for name, value in task.fields]
+        head = "\n".join(lines)
+        body: list[str] = []
+        if task.notes.strip():
+            body.append(task.notes.strip())
+        if task.comments:
+            body.append(
+                "Kommentare:\n"
+                + "\n".join(
+                    f"- {comment.created_at.astimezone():%d.%m.%Y} {comment.author}: {comment.text}"
+                    for comment in task.comments
+                )
+            )
+        names = [project for project, _ in task.projects]
+        context = profile.classify(" ".join([task.name, *names]))
+        found += _pieces(
+            f"{ASANA}:{task.gid}",
+            ASANA,
+            task.name,
+            "\n\n".join(body),
+            # Stand, Zustaendige und Projekt stehen in jedem Teil einer langen Aufgabe,
+            # sonst kennt ein Treffer aus der Mitte der Kommentare den Stand nicht.
+            head=head,
+            # "Sonstiges" und "Extern (unbekannt)" sagen nichts; dann bleibt der Kontext leer.
+            context=profile.label(context) if context in {c.id for c in profile.contexts} else "",
+            source="Asana" + (f", {names[0]}" if names else ""),
+        )
+    return found
+
+
+def collect(profile: Profile, store: Store, mirror: Mirror | None = None) -> list[Passage]:
+    """Alles, was durchsuchbar sein soll, aus den Quellen des Profils.
+
+    Ohne ``mirror`` wird der Asana-Spiegel gelesen, wenn es ihn gibt.
+    """
     found: list[Passage] = []
     for label, folder in stories.story_folders(profile):
         found += story_passages(label, folder)
-    return found + store_passages(store, profile)
+    found += store_passages(store, profile)
+    if mirror is not None:
+        return found + asana_passages(mirror, profile)
+    if mirror_path().is_file():
+        mirror = Mirror()
+        try:
+            found += asana_passages(mirror, profile)
+        finally:
+            mirror.close()
+    return found
 
 
 # --- Index
@@ -710,6 +786,7 @@ KIND_PLURALS = {
     REMARK: "Bemerkungen",
     BRIEF: "Einordnungen",
     MESSAGE: "Nachrichten",
+    ASANA: "Asana-Aufgaben",
 }
 
 

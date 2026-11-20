@@ -1,5 +1,9 @@
 """Tests fuer das Messprogramm: Falldateien, Pruefer, Auswertung und Vergleich."""
 
+import os
+
+os.environ["LOCAL_AGENTS_ASANA_DB"] = "/gibt/es/nicht/asana.db"  # nie den echten Asana-Spiegel lesen
+
 import json
 import tempfile
 import unittest

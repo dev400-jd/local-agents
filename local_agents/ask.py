@@ -49,7 +49,7 @@ ENTRY_BUDGET = 9000
 SEARCH_HITS = 4
 HISTORY_TURNS = 2
 MAX_HISTORY_CHARS = 600
-NOTHING_FOUND = "Dazu habe ich in den Stories und Bemerkungen nichts gefunden."
+NOTHING_FOUND = "Dazu habe ich in Stories, Bemerkungen und Asana-Aufgaben nichts gefunden."
 
 FIRST, LAST, NEXT, PREVIOUS = "erste", "letzte", "nächste", "vorige"
 LAST_WORDS = re.compile(r"\b(letzte[nrs]?|zuletzt|am ende|am schluss|abschließend|abschluss|endet|hört)\b")
@@ -334,7 +334,7 @@ ask_agent = Agent(deps_type=AskDeps, model_settings=MODEL_SETTINGS, retries=3)
 def instructions(ctx: RunContext[AskDeps]) -> str:
     deps = ctx.deps
     text = (
-        "Du beantwortest Fragen zu den User Stories eines Projekts. Regeln:\n"
+        "Du beantwortest Fragen zu den User Stories und Aufgaben eines Projekts. Regeln:\n"
         "- Antworte auf Deutsch und nur mit dem, was in den Einträgen und der Gliederung "
         "unten steht. Kein Wissen von außerhalb, keine Vermutungen.\n"
         "- Beantworten die Einträge die Frage nicht oder nur zum Teil, sage das in einem "

@@ -10,7 +10,7 @@ beschrieben ist, zieht die betroffene Zeile nach und setzt das Datum oben neu.
 
 ## Bestand
 
-Fünfzehn Agenten und Bausteine lesen Kalender, Asana und Story-Dateien, machen
+Sechzehn Agenten und Bausteine lesen Kalender, Asana und Story-Dateien, machen
 daraus Aufgaben und Notizen und sprechen mit dem Nutzer. Einer davon erledigt
 selbst eine Aufgabe: Der Nachrichten-Agent schreibt den Entwurf zu einer
 Verschiebe-Aufgabe.
@@ -29,7 +29,8 @@ Verschiebe-Aufgabe.
 | Sprache | `voice.py`, `listen.py` | Vorlesen (Piper) und Zuhören (Whisper), beides lokal | Kein durchgehendes Gespräch, nur Frage und Antwort an einer Stelle im Planungs-Agenten. |
 | Messung | `evals.py`, `eval_suites.py`, `eval_capture.py` | Lässt fünf Agenten gegen feste Fälle laufen (auf Basis von pydantic-evals): Scrum Master, Rückmeldung, Status-Agent, Terminart, Story-Erkennung. Mehrfach, mit Quote, Mitschnitt der Modellantwort und Vergleich zum letzten Lauf. `merke` hält echte Fälle fest. | 55 erfundene Fälle, noch keine echten. Nicht gemessen: Ergebnisliste des Termin-Agenten, freie Texte von Kalender- und Asana-Agent, Spracheingabe. |
 | Gesprächs-Agent | `ask.py` | Beantwortet Fragen zum Inhalt der Stories im Gespräch: Der Code wählt die Einträge (Kürzel, Stelle im Feature, Anschlussfrage, Suche), das Modell antwortet daraus, der Code prüft Kürzel und Zahlen | Nur lesend. Regeln lesen Worte, nicht Absichten. Geprüft wird nicht der Sinn der Antwort. 12 erfundene Messfälle (60 von 60 Läufen mit `gpt-oss:20b`), keine echten. |
-| Suche | `search.py` | Findet nach Worten und, mit Embedding-Modell, nach Bedeutung die passenden Stories, Abschnitte, Bemerkungen, Einordnungen und Nachrichten zu einer Frage; gleicht den Index bei jedem Aufruf ab | Bedeutungssuche nur mit Embedding-Modell im Profil, ihre Schwelle ist an erfundenen Fragen eingestellt. Fragen nach dem Aufbau („was kommt zuletzt?") beantwortet sie nicht. Asana und Kalender fehlen. 21 erfundene Messfälle, keine echten. |
+| Asana-Spiegel | `asana_mirror.py` | Hält einen lokalen, nur lesenden Abzug der eigenen und der gefolgten Asana-Aufgaben mit Kommentaren; Suche und Gesprächs-Agent lesen ihn mit | Abgleich nur auf Aufruf. Keine ganzen Projekte, Anhänge, Statusberichte. Gegen das echte Asana noch nicht erprobt. |
+| Suche | `search.py` | Findet nach Worten und, mit Embedding-Modell, nach Bedeutung die passenden Stories, Abschnitte, Bemerkungen, Einordnungen und Nachrichten zu einer Frage; gleicht den Index bei jedem Aufruf ab | Bedeutungssuche nur mit Embedding-Modell im Profil, ihre Schwelle ist an erfundenen Fragen eingestellt. Fragen nach dem Aufbau („was kommt zuletzt?") beantwortet sie nicht. Der Kalender fehlt. 21 erfundene Messfälle, keine echten. |
 | Kontextfenster | `context_window.py` | Zeigt je Modell, ob das Kontextfenster feststeht, und legt eine Variante mit 16K an | Die Variante muss von Hand ins Profil. Für das große Modell nicht erprobt. Kein Agent warnt, wenn ein Auftrag das Fenster sprengt. |
 | Profil und Datenbank | `profile.py`, `store.py` | Gemeinsames Gedächtnis: Kontexte, Rolle, Stresslevel, Aufgaben, Notizen, Laufprotokoll | Kein Gedächtnis über Gespräche, keine gelernten Vorlieben. |
 
@@ -139,6 +140,27 @@ Modell mit 20 Milliarden Parametern wird bei offenen, mehrstufigen Aufgaben
 nicht gleichziehen, egal wie gut das Drumherum ist. Erreichbar ist dagegen,
 dass es in eng umrissenen Abläufen ähnlich verlässlich wirkt, weil Code, Suche
 und Prüfungen ihm die schweren Teile abnehmen.
+
+## Asana steuern
+
+Ziel ist ein Agent, der Asana nicht nur liest, sondern steuert. Er schreibt in
+ein System, das Kollegen sehen; die Qualität hängt deshalb an dem, was der Code
+erzwingt: ein fester Katalog von Aktionen statt freier API-Aufrufe, Namen löst
+der Code auf, vor jedem Schreiben stehen Plan und Freigabe, danach Kontrolle
+und Protokoll. Inhalte aus Asana sind fremder Text und lösen nie eine Aktion
+aus.
+
+| Etappe | Inhalt | Stand |
+|---|---|---|
+| A | Asana lokal spiegeln, in Suche und Gesprächs-Agent einbinden | gebaut (2026-11-20), am echten Konto nicht erprobt |
+| B | Lesen auf hohem Niveau: fällig, geändert, wartet auf andere | offen |
+| C | Eigene Aufgaben steuern: anlegen, abschließen, Fälligkeit, Abschnitt | offen; vorher Versuch mit dem MCP-Server von Asana und Klärung, ob automatisiertes Schreiben im Firmen-Workspace erlaubt ist |
+| D | Für andere Sichtbares: Kommentare, Zuweisungen, Statusberichte, immer als Entwurf mit Freigabe | offen |
+| E | Struktur, Massenänderungen mit Probelauf, tägliche Sichtung | offen |
+
+Gemessen wird gegen ein nachgebautes Asana, nie gegen das echte Konto, auch
+mit Fällen, in denen Aufgaben und Kommentare eingeschleuste Anweisungen
+enthalten.
 
 ## Empfohlene Reihenfolge
 

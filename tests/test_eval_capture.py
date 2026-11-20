@@ -1,5 +1,9 @@
 """Tests fuer das Festhalten echter Faelle (``evals merke``)."""
 
+import os
+
+os.environ["LOCAL_AGENTS_ASANA_DB"] = "/gibt/es/nicht/asana.db"  # nie den echten Asana-Spiegel lesen
+
 import tempfile
 import unittest
 from datetime import date, datetime

@@ -1,5 +1,9 @@
 """Tests fuer den Gespraechs-Agenten: Auswahl der Eintraege, Pruefung der Antwort, Gespraech."""
 
+import os
+
+os.environ["LOCAL_AGENTS_ASANA_DB"] = "/gibt/es/nicht/asana.db"  # nie den echten Asana-Spiegel lesen
+
 import unittest
 from pathlib import Path
 

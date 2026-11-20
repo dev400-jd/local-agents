@@ -1,5 +1,9 @@
 """Tests fuer die lokale Suche: Quellen einsammeln, Index abgleichen, Rangfolge."""
 
+import os
+
+os.environ["LOCAL_AGENTS_ASANA_DB"] = "/gibt/es/nicht/asana.db"  # nie den echten Asana-Spiegel lesen
+
 import tempfile
 import unittest
 from datetime import date, datetime

@@ -845,10 +845,11 @@ Durchsucht werden:
 | Bemerkungen aus dem Scrum Master | Bemerkung, ohne die entfernten |
 | Einordnungen des Termin-Agenten | Termin |
 | Nachrichten-Agent | übernommener Nachricht |
+| [Asana-Spiegel](#asana-spiegel), wenn es ihn gibt | Aufgabe, mit Stand, Beschreibung, Feldern und Kommentaren |
 
 Einträge über 2400 Zeichen werden an Absätzen geteilt („Teil 1 von 3"), damit
-ein Treffer in den Auftrag eines Agenten passt. Asana und der Kalender sind
-nicht im Index.
+ein Treffer in den Auftrag eines Agenten passt. Der Kalender ist nicht im
+Index.
 
 Der Index ist eine eigene Datei neben der Agenten-Datenbank
 (`~/.local/share/local-agents/search.db`, anderer Ort:
@@ -927,6 +928,74 @@ Grenzen:
 - **Ein Allerweltswort genügt der Wortsuche für einen Treffer.** Die
   Bedeutungssuche nimmt solche Treffer nicht wieder heraus, sie stuft sie nur
   herab.
+
+## Asana-Spiegel
+
+Ein lokaler, nur lesender Abzug deiner Asana-Aufgaben. Suche und
+Gesprächs-Agent lesen ihn mit; Asana selbst wird dabei nicht gefragt.
+
+```bash
+.venv/bin/python -m local_agents.asana_mirror          # abgleichen: nur, was sich geändert hat
+.venv/bin/python -m local_agents.asana_mirror voll     # alles neu lesen, Verschwundenes austragen
+.venv/bin/python -m local_agents.asana_mirror status   # Bestand und Alter, ohne Asana zu fragen
+```
+
+```text
+Voller Abgleich: 3 neu, 0 geändert, 0 unverändert, 0 entfernt.
+Asana-Spiegel: 3 Aufgaben (2 offen; 2 dir zugewiesen, 1 gefolgt) aus 1 Projekten, 1 Kommentare; vor 0 Min abgeglichen.
+```
+
+Das Token ist dasselbe wie beim Asana-Agenten
+([Asana-Token einrichten](#asana-token-einrichten)).
+
+Gespiegelt wird:
+
+- **Dir zugewiesene Aufgaben:** alle offenen und die in den letzten 90 Tagen
+  erledigten.
+- **Aufgaben, denen du folgst** und die in den letzten 90 Tagen geändert
+  wurden. Das braucht die Asana-Suche, die es nur in bezahlten Plänen gibt;
+  sonst entfällt dieser Teil mit einem Hinweis.
+- **Je Aufgabe:** Beschreibung, Fälligkeit, Zuständige, Projekte und
+  Abschnitte, benutzerdefinierte Felder und die letzten 30 Kommentare.
+
+Nicht gespiegelt: Aufgaben anderer, denen du nicht folgst, ganze Projekte,
+Anhänge, Statusberichte, Portfolios und der Posteingang.
+
+Der erste Abgleich und `voll` lesen je Aufgabe einmal die Kommentare, also
+eine Abfrage je Aufgabe; bei einigen hundert Aufgaben dauert das geschätzt
+ein bis wenige Minuten (nicht gemessen). Danach fragt ein Abgleich nur nach Aufgaben, die sich seit dem
+letzten Mal geändert haben. Nach sieben Tagen ist der nächste Abgleich von
+selbst ein voller.
+
+Der Spiegel liegt neben der Agenten-Datenbank
+(`~/.local/share/local-agents/asana.db`, anderer Ort: `LOCAL_AGENTS_ASANA_DB`).
+Er enthält Inhalte aus dem Asana deines Arbeitgebers im Klartext, auch Namen
+von Kollegen, und gehört nicht ins Repo. Er ist abgeleitet: Löschen schadet
+nicht. Über die Suche gehen diese Inhalte an das lokale Embedding-Modell und
+über den Gesprächs-Agenten an das lokale Sprachmodell, nicht weiter.
+
+Geschrieben wird nach Asana nichts. Das Modul kennt nur lesende Abfragen.
+
+Grenzen:
+
+- **So aktuell wie der letzte Abgleich.** Er läuft nur, wenn du ihn aufrufst;
+  `status` zeigt das Alter.
+- **Neue Kommentare kommen mit dem kurzen Abgleich womöglich nicht an.** Ob
+  ein Kommentar das Änderungsdatum einer Aufgabe verschiebt, lässt Asana
+  offen. Der volle Abgleich liest deshalb die Kommentare aller offenen
+  Aufgaben neu.
+- **Was nicht mehr zu dir gehört, verschwindet erst beim vollen Abgleich:**
+  gelöschte Aufgaben und solche, die jemand anderem zugewiesen wurden.
+- **Gegen das echte Asana ist der Spiegel noch nicht erprobt,** nur gegen
+  einen Nachbau in den Tests.
+
+In der Suche erscheint jede Aufgabe als Eintrag der Art „Asana-Aufgabe":
+
+```text
+1. Angebot prüfen
+   Asana-Aufgabe · Kunde ACME · Asana, Datenplattform
+   Stand: offen, fällig 24.11.2026 Zuständig: Alex Beispiel Projekt: Datenplattform, Abschnitt: In Arbeit …
+```
 
 ## Gesprächs-Agent
 
