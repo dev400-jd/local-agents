@@ -1057,6 +1057,7 @@ def aktion_task(model: object) -> Callable[[AktionInputs], AktionOutput]:
         with capture_run_messages() as messages:
             wish = asana_actions.interpret(inputs.satz, state, model)
         said = model_said(messages)
+        wish = asana_actions.named_task(inputs.satz, asana_actions.named_section(inputs.satz, wish, state), state)
         last = next((task for task in state.tasks if inputs.letzte and task.name == inputs.letzte), None)
         if last is not None:
             wish = asana_actions.refer_to_last(inputs.satz, wish, state, _LastAction(last.gid, state.gid))

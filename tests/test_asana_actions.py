@@ -411,6 +411,36 @@ class TestAct(ActionCase):
         for fine in ("Leg die Aufgabe Angebot prüfen und versenden an", "Hak Angebot prüfen ab", "Leg die Aufgabe Alle Jahre wieder an"):
             aa.refuse_by_wording(fine)
 
+    def test_section_named_in_the_sentence_is_added_if_the_model_left_it_out(self) -> None:
+        state = self.state()
+        cases = {
+            "Neue Aufgabe: Reisekosten einreichen, im Abschnitt In Arbeit": "In Arbeit",
+            "tu Folien bauen in In Arbeit": "In Arbeit",
+            "Leg Reisekosten einreichen unter offen an": "Offen",
+            "Leg die Aufgabe Offene Punkte klären an": "",  # "Offene" ist nicht der Abschnitt "Offen"
+            "Leg die Aufgabe In Arbeit befindliche Themen sammeln an": "",  # kein "in/nach/Abschnitt" davor
+            "Verschiebe sie von Offen nach In Arbeit": "In Arbeit",
+        }
+        for sentence, expected in cases.items():
+            self.assertEqual(aa.named_section(sentence, Wish(aktion="anlegen", titel="x"), state).abschnitt, expected, sentence)
+        kept = aa.named_section("tu es in In Arbeit", Wish(aktion="abschnitt", aufgabe="x", abschnitt="Offen"), state)
+        self.assertEqual(kept.abschnitt, "Offen")  # was das Modell genannt hat, bleibt
+        self.assertEqual(aa.named_section("Hak es in In Arbeit ab", Wish(aktion="abschliessen", aufgabe="x"), state).abschnitt, "")
+        # Zusammen mit der Regel darunter: "tu Folien bauen in In Arbeit" wird ein Verschieben,
+        # auch wenn das Modell "anlegen" ohne Abschnitt geliefert hat.
+        result = self.act({"aktion": "anlegen", "titel": "Folien bauen"}, sentence="tu Folien bauen in In Arbeit")
+        self.assertEqual((result, self.asana.tasks["t2"]["section"]), ("ausgefuehrt", "s2"))
+
+    def test_task_named_in_the_sentence_is_added_if_the_model_left_it_out(self) -> None:
+        state = self.state()
+        self.assertEqual(aa.named_task("Hak Angebot prüfen ab", Wish(aktion="abschliessen"), state).aufgabe, "Angebot prüfen")
+        self.assertEqual(aa.named_task("Vertrag ablegen ist doch offen", Wish(aktion="wieder_oeffnen"), state).aufgabe, "Vertrag ablegen")
+        self.assertEqual(aa.named_task("Hak Vertrag ablegen ab", Wish(aktion="abschliessen"), state).aufgabe, "")  # schon erledigt
+        self.assertEqual(aa.named_task("Hak Folien ab", Wish(aktion="abschliessen"), state).aufgabe, "")  # kein voller Name
+        self.assertEqual(aa.named_task("Hak Angebot prüfen ab", Wish(aktion="abschliessen", aufgabe="Folien bauen"), state).aufgabe, "Folien bauen")
+        self.assertEqual(self.act({"aktion": "abschliessen", "aufgabe": ""}, sentence="Hak Angebot prüfen ab"), "ausgefuehrt")
+        self.assertTrue(self.asana.tasks["t1"]["completed"])
+
     def test_creating_an_existing_task_with_a_section_means_moving_it(self) -> None:
         plan = self.plan(aktion="anlegen", titel="Folien bauen", abschnitt="In Arbeit")
         self.assertEqual((plan.action, plan.changes), ("abschnitt", (("Abschnitt", "Offen", "In Arbeit"),)))

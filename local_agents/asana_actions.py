@@ -802,6 +802,41 @@ def refuse_by_wording(sentence: str) -> None:
         raise Clarify("Das sind mehrere Aktionen in einem Satz. Bitte eine nach der anderen.")
 
 
+def named_section(sentence: str, wish: Wish, state: ProjectState) -> Wish:
+    """Ergaenzt den Abschnitt, wenn der Satz einen des Projekts woertlich nennt und das Modell ihn ausgelassen hat.
+
+    Gemessen: Bei "Neue Aufgabe ..., im Abschnitt In Arbeit" fehlte der
+    Abschnitt in einem von fuenf Laeufen, und die Aufgabe waere ohne ihn
+    angelegt worden.
+    """
+    if wish.aktion not in (CREATE, SECTION) or wish.abschnitt.strip():
+        return wish
+    found = [
+        name
+        for _, name in state.sections
+        if name.strip()
+        and re.search(
+            rf"\b(?:abschnitt|spalte|in|im|nach|unter)\s+(?:den\s+|dem\s+|die\s+)?(?:abschnitt\s+|spalte\s+)?{re.escape(name.strip())}(?!\w)",
+            sentence,
+            re.IGNORECASE,
+        )
+    ]
+    return wish.model_copy(update={"abschnitt": found[0]}) if len(found) == 1 else wish
+
+
+def named_task(sentence: str, wish: Wish, state: ProjectState) -> Wish:
+    """Ergaenzt die Aufgabe, wenn das Modell sie ausgelassen hat und der Satz genau eine beim vollen Namen nennt."""
+    if wish.aktion in (CREATE, NEW_SECTION, UNCLEAR) or wish.aufgabe.strip():
+        return wish
+    lowered = sentence.casefold()
+    found = [
+        task.name
+        for task in state.tasks
+        if task.completed == (wish.aktion == REOPEN) and task.name.strip() and task.name.casefold().strip() in lowered
+    ]
+    return wish.model_copy(update={"aufgabe": found[0]}) if len(found) == 1 else wish
+
+
 def interpret(sentence: str, state: ProjectState, model) -> Wish:
     try:
         return wish_agent.run_sync(sentence, deps=WishDeps([name for _, name in state.sections]), model=model).output
@@ -827,7 +862,8 @@ def act(
     try:
         state = load_state(write_project(profile), transport)
         refuse_by_wording(sentence)
-        wish = refer_to_last(sentence, interpret(sentence, state, model), state, journal)
+        wish = named_section(sentence, interpret(sentence, state, model), state)
+        wish = refer_to_last(sentence, named_task(sentence, wish, state), state, journal)
         plan = make_plan(wish, state, now.astimezone().date())
     except Clarify as exc:
         out(str(exc))

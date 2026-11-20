@@ -34,6 +34,7 @@ Bestandene Läufe von allen Läufen; je Fall fünf Läufe, bei der Terminart zwe
 | Status-Agent | 9 | 45 von 45, 1 bis 2 s | 45 von 45, 8 bis 14 s |
 | Terminart | 13 | 24 von 26, 3 bis 18 s | Abbruch nach 10 bestandenen Läufen (rund 50 s je Lauf): Speichermangel |
 | Story-Erkennung | 5 | 19 von 25, unter 1 s | 25 von 25, 8 bis 21 s |
+| Asana steuern (nur der Plan) | 24 | 109 von 115, nach Korrekturen 119 von 120, 1 bis 3 s | `qwen-turbo:iq3-m`: 48 von 48 bei 2 Läufen je Fall, 8 bis 25 s |
 | Asana-Aufgaben abfragen | 14 | 63, nach Korrekturen 69 von 70, 2 bis 3 s | nicht gemessen |
 | Gesprächs-Agent | 12 | 47, nach Korrekturen 60 von 60, 1 bis 2 s | nicht gemessen |
 | Nachrichten-Agent | 10 | 49 von 50, 2 bis 4 s | 42 von 45, 24 bis 70 s (9 Fälle, vor der Lockerung) |
@@ -78,6 +79,21 @@ Und bei den Asana-Abfragen (erster Messlauf 63 von 70, danach 69 von 70):
 Offen bleibt dort ein Lauf von 70: „Welche Aufgaben kommen aus Asana?" wurde
 einmal als „alle, auch erledigte" verstanden. Die Frage lässt beides zu, und
 die Überschrift der Liste nennt, wie sie verstanden wurde.
+
+Und beim Steuern von Asana (20.11., gemessen wird nur der Plan vor der
+Freigabe):
+
+| Befund | Korrektur |
+|---|---|
+| Aus „Schließe alle Aufgaben ab" machte das Modell einmal die Aufgabe „alle Aufgaben"; der Code fand dazu die Aufgabe mit der eingeschleusten Anweisung im Titel und plante, sie abzuschließen. | Sätze über mehrere Aufgaben lehnt der Code ab, bevor das Modell gefragt wird. |
+| Von zwei Aktionen in einem Satz plante das Modell einmal nur die erste. | Zwei Aktionsverben in einem Satz lehnt der Code ab. |
+| Bei „Neue Aufgabe …, im Abschnitt In Arbeit" fehlte der Abschnitt einmal im Plan. | Der Code ergänzt einen Abschnitt, den der Satz wörtlich nennt. |
+| „tu Folien bauen in In Arbeit" galt in 3 von 5 Läufen als Anlegen oder als unklar. | Anlegen einer vorhandenen Aufgabe mit Abschnitt gilt als Verschieben; danach 5 von 5. |
+
+Die übrigen Fehlläufe waren Rückfragen statt eines Plans, also Fehler zur
+sicheren Seite. Das größere Modell `qwen-turbo:iq3-m` bestand alle Fälle, bei
+nur zwei Läufen je Fall und fünf- bis zehnfacher Dauer; das ist ein Hinweis,
+kein Beleg.
 
 Weiter bestehende Schwächen, alle mit `gpt-oss:20b`:
 
