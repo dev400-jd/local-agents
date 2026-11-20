@@ -22,11 +22,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 from pydantic_ai import capture_run_messages
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_evals import Dataset
 from pydantic_evals.evaluators import EvaluationReason, Evaluator, EvaluatorContext
 
-from local_agents import ask, feedback, meeting_agent, message_agent, scrum_master, search, status_agent, stories
+from local_agents import asana_tasks, ask, feedback, meeting_agent, message_agent, scrum_master, search, status_agent, stories
+from local_agents.asana_mirror import MirroredTask
 from local_agents.checks import invented_numbers
 from local_agents.meeting_types import BY_ID
 from local_agents.profile import CUSTOMER, INTERNAL, Context, Profile, load_profile
@@ -874,6 +876,116 @@ class Antwort(Evaluator[FragenInputs, FragenOutput, Any]):
         return EvaluationReason(value=not problems, reason="; ".join(problems))
 
 
+# --- Asana-Aufgaben abfragen
+
+
+class AsanaAufgabe(Strict):
+    """Eine Aufgabe im nachgebauten Asana-Spiegel."""
+
+    name: str
+    faellig: date | None = None
+    mir: bool = True  # dem Nutzer zugewiesen; sonst folgt er ihr nur
+    zustaendig: str = ""  # Name, wenn nicht der Nutzer
+    erledigt: bool = False
+    projekt: str = "Datenplattform"
+    geaendert: date | None = None  # Tag der letzten Aenderung
+
+
+class AsanaInputs(Strict):
+    frage: str
+    heute: date
+    aufgaben: list[AsanaAufgabe]
+
+
+class AsanaOutput(BaseModel):
+    titel: list[str]  # die gefundenen Aufgaben
+    beschreibung: str  # wie der Filter verstanden wurde
+    nur_anzahl: bool = False
+    verstanden: bool = True  # False: Das Modell lieferte keinen Filter, der aufgeht
+    rueckmeldung: str = ""  # statt einer Liste: was am Filter nicht aufgeht (unbekanntes Projekt)
+    modell: str = ""
+
+
+def asana_task(model: object) -> Callable[[AsanaInputs], AsanaOutput]:
+    """Die Aufgabe fuer pydantic-evals: Frage in einen Filter uebersetzen lassen und ihn anwenden."""
+
+    def run(inputs: AsanaInputs) -> AsanaOutput:
+        tasks = [
+            MirroredTask(
+                str(number),
+                item.name,
+                completed=item.erledigt,
+                due=item.faellig.isoformat() if item.faellig else "",
+                assignee="Alex Beispiel" if item.mir else (item.zustaendig or "Erika Muster"),
+                mine=item.mir,
+                followed=not item.mir,
+                projects=((item.projekt, ""),),
+                modified_at=f"{(item.geaendert or date(2026, 1, 1)).isoformat()}T08:00:00.000Z",
+            )
+            for number, item in enumerate(inputs.aufgaben)
+        ]
+        projects = sorted({project for task in tasks for project, _ in task.projects})
+        with capture_run_messages() as messages:
+            try:
+                wanted = asana_tasks.task_agent.run_sync(
+                    inputs.frage, deps=asana_tasks.TaskDeps(tasks, inputs.heute, projects, inputs.frage), model=model
+                ).output
+            except UnexpectedModelBehavior:
+                return AsanaOutput(titel=[], beschreibung="", verstanden=False, modell=model_said(messages))
+        try:
+            result = asana_tasks.run(wanted, tasks, inputs.heute)
+        except asana_tasks.UnknownProject as exc:
+            return AsanaOutput(titel=[], beschreibung="", rueckmeldung=str(exc), modell=model_said(messages))
+        return AsanaOutput(
+            titel=[task.name for task in result.tasks],
+            beschreibung=result.description,
+            nur_anzahl=result.count_only,
+            modell=model_said(messages),
+        )
+
+    return run
+
+
+@dataclass
+class Aufgabenliste(Evaluator[AsanaInputs, AsanaOutput, Any]):
+    """Prueft, welche Aufgaben die Abfrage findet.
+
+    ``genau``: genau diese Aufgaben, Reihenfolge egal. ``zuerst``: die erste
+    der Liste. ``nur_anzahl``: Es war nur nach der Anzahl gefragt. ``meldet``:
+    Statt einer Liste sagt der Agent, was nicht aufgeht (unbekanntes Projekt).
+    """
+
+    genau: list[str] = field(default_factory=list)
+    zuerst: str = ""
+    nur_anzahl: bool = False
+    meldet: str = ""  # statt einer Liste kommt eine Rueckmeldung, die dieses Textstueck enthaelt
+
+    def evaluate(self, ctx: EvaluatorContext[AsanaInputs, AsanaOutput, Any]) -> EvaluationReason:
+        output = ctx.output
+        if not output.verstanden:
+            return EvaluationReason(value=False, reason="Modell lieferte keinen Filter, der aufgeht")
+        if self.meldet:
+            fine = self.meldet.casefold() in output.rueckmeldung.casefold()
+            reason = "" if fine else f"keine Rückmeldung mit „{self.meldet}“; verstanden als: {output.beschreibung or output.rueckmeldung}"
+            return EvaluationReason(value=fine, reason=reason)
+        if output.rueckmeldung:
+            return EvaluationReason(value=False, reason=f"Rückmeldung statt Liste: {output.rueckmeldung}")
+        problems = []
+        missing = [name for name in self.genau if name not in output.titel]
+        extra = [name for name in output.titel if name not in self.genau]
+        if missing:
+            problems.append(f"fehlt: {'; '.join(missing)}")
+        if extra:
+            problems.append(f"zu viel: {'; '.join(extra)}")
+        if self.zuerst and (not output.titel or output.titel[0] != self.zuerst):
+            problems.append(f"„{self.zuerst}“ steht nicht zuerst")
+        if self.nur_anzahl != output.nur_anzahl:
+            problems.append("es war nur nach der Anzahl gefragt" if self.nur_anzahl else "es war nach der Liste gefragt, nicht nur nach der Anzahl")
+        if problems:
+            problems.append(f"verstanden als: {output.beschreibung}")
+        return EvaluationReason(value=not problems, reason="; ".join(problems))
+
+
 # --- Agenten und ihre Falldateien
 
 
@@ -898,4 +1010,5 @@ AGENTS: dict[str, Suite] = {
     message_agent.AGENT_NAME: Suite(Dataset[NachrichtInputs, NachrichtOutput, Any], (Nachricht,), nachricht_task),
     search.AGENT_NAME: Suite(Dataset[SucheInputs, SucheOutput, Any], (Treffer,), suche_task, uses_model=False),
     ask.AGENT_NAME: Suite(Dataset[FragenInputs, FragenOutput, Any], (Antwort,), fragen_task),
+    asana_tasks.AGENT_NAME: Suite(Dataset[AsanaInputs, AsanaOutput, Any], (Aufgabenliste,), asana_task),
 }

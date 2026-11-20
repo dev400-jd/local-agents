@@ -30,12 +30,14 @@ import re
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-from local_agents import search
+from local_agents import asana_tasks, search
 from local_agents.agent import MODEL_SETTINGS, ollama_model
+from local_agents.asana_mirror import Mirror, mirror_path
 from local_agents.checks import invented_numbers
 from local_agents.profile import ProfileError, load_profile
 from local_agents.search import REMARK, STORY, Embedder, Index, Passage
@@ -43,6 +45,15 @@ from local_agents.store import Store
 
 AGENT_NAME = "fragen"
 MODEL, CODE, FALLBACK = "modell", "code", "fundstellen"
+TASK_LIST = "asana"  # die Antwort ist eine Liste aus dem Asana-Spiegel (asana_tasks.py)
+# Eine Listenfrage zu Asana-Aufgaben: Sie fragt nach mehreren ("welche", "wie viele",
+# "was ist ...") und nennt Aufgaben in der Mehrzahl, Asana oder eine Faelligkeit.
+LIST_WORDS = re.compile(
+    r"\b(welche[nrs]?|wie ?viele|alle|liste|zeig|zeige|was (ist|steht|liegt|hat sich|habe ich|muss ich)|"
+    r"wo warte|worauf warte|auf wen warte)\b"
+)
+TASK_WORDS = re.compile(r"\b(asana|aufgaben|todos|tasks|fällig|überfällig|zugewiesen|warte)\b")
+STORY_WORDS = re.compile(r"\b(story|stories|feature|features|akzeptanzkriteri\w*)\b")
 # So viele Zeichen an Eintraegen bekommt das Modell (rund 3000 Tokens). Mit
 # Auftrag, Gliederung und Antwort passt das in ein Kontextfenster ab 8K.
 ENTRY_BUDGET = 9000
@@ -425,11 +436,21 @@ def source_line(selection: Selection) -> str:
 class Conversation:
     """Ein Gespraech: merkt sich die letzten Wortwechsel und die Story, um die es geht."""
 
-    def __init__(self, index: Index, model, embedder: Embedder | None = None, store: Store | None = None) -> None:
+    def __init__(
+        self,
+        index: Index,
+        model,
+        embedder: Embedder | None = None,
+        store: Store | None = None,
+        mirror: Mirror | None = None,
+        now: Callable[[], datetime] = lambda: datetime.now().astimezone(),
+    ) -> None:
         self.index = index
         self.model = model
         self.embedder = embedder
         self.store = store
+        self.mirror = mirror  # Asana-Spiegel fuer Listenfragen; None = keiner
+        self.now = now
         self.history: list[tuple[str, str]] = []
         self.focus = ""
         self.last: Answer | None = None
@@ -440,6 +461,14 @@ class Conversation:
         self.last = None
 
     def ask(self, question: str) -> Answer:
+        if self.mirror is not None and is_task_list_question(question):
+            # Listen und Mengen beantwortet die Suche nicht: Sie liefert die besten
+            # Treffer, nicht alle. Dafuer gibt es die Abfrage auf dem Spiegel.
+            text = asana_tasks.answer(question, self.mirror, self.model, self.now())
+            answer = Answer(text, TASK_LIST, Selection(how="Abfrage im Asana-Spiegel"))
+            self.history.append((question, text.splitlines()[0]))
+            self.last = answer
+            return answer
         try:
             selection = select(self.index, question, self.embedder, self.focus)
         except search.EmbeddingError:
@@ -460,6 +489,14 @@ class Conversation:
         self.history.append((question, answer.text))
         self.last = answer
         return answer
+
+
+def is_task_list_question(question: str) -> bool:
+    """Ob die Frage eine Liste oder Menge von Asana-Aufgaben verlangt statt den Inhalt einer Sache."""
+    lower = question.lower()
+    if search.story_keys(lower) or STORY_WORDS.search(lower):
+        return False
+    return bool(LIST_WORDS.search(lower) and TASK_WORDS.search(lower))
 
 
 def answer_lines(answer: Answer) -> str:
@@ -500,6 +537,7 @@ def main(argv: list[str]) -> int:
         print(exc, file=sys.stderr)
         return 1
     store, index = Store(), Index()
+    mirror = Mirror() if mirror_path().is_file() else None
     try:
         search.refresh(index, profile, store)
         notes: list[str] = []
@@ -509,7 +547,7 @@ def main(argv: list[str]) -> int:
         if not sum(index.counts().values()):
             print("Der Index ist leer: Im Profil hat kein Kontext ein stories_dir mit Story-Dateien.", file=sys.stderr)
             return 1
-        conversation = Conversation(index, ollama_model(profile.model_for(AGENT_NAME)), embedder, store)
+        conversation = Conversation(index, ollama_model(profile.model_for(AGENT_NAME)), embedder, store, mirror)
         if args:
             print(answer_lines(conversation.ask(args[0])))
         else:
@@ -518,6 +556,8 @@ def main(argv: list[str]) -> int:
     finally:
         index.close()
         store.close()
+        if mirror is not None:
+            mirror.close()
 
 
 if __name__ == "__main__":

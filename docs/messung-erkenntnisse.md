@@ -34,6 +34,7 @@ Bestandene Läufe von allen Läufen; je Fall fünf Läufe, bei der Terminart zwe
 | Status-Agent | 9 | 45 von 45, 1 bis 2 s | 45 von 45, 8 bis 14 s |
 | Terminart | 13 | 24 von 26, 3 bis 18 s | Abbruch nach 10 bestandenen Läufen (rund 50 s je Lauf): Speichermangel |
 | Story-Erkennung | 5 | 19 von 25, unter 1 s | 25 von 25, 8 bis 21 s |
+| Asana-Aufgaben abfragen | 14 | 63, nach Korrekturen 69 von 70, 2 bis 3 s | nicht gemessen |
 | Gesprächs-Agent | 12 | 47, nach Korrekturen 60 von 60, 1 bis 2 s | nicht gemessen |
 | Nachrichten-Agent | 10 | 49 von 50, 2 bis 4 s | 42 von 45, 24 bis 70 s (9 Fälle, vor der Lockerung) |
 
@@ -66,6 +67,17 @@ von 60):
 | „30 Tage" stand in der Antwort und galt doch als fehlend: geschütztes Leerzeichen zwischen Zahl und Einheit. | Der Agent ersetzt solche Leerzeichen. |
 
 Den ersten Befund hatte ein Probelauf von Hand mit fünf Fragen nicht gezeigt.
+
+Und bei den Asana-Abfragen (erster Messlauf 63 von 70, danach 69 von 70):
+
+| Befund | Korrektur |
+|---|---|
+| Ein Projekt, das nicht im Bestand ist, ließ das Modell weg, weil der Auftrag „nimm den Namen aus dieser Liste" sagte. Heraus kam die Liste über alle Projekte, ohne Hinweis. | Der Auftrag verlangt den Namen aus der Frage; der Code liest „Projekt X" zusätzlich selbst und meldet ein unbekanntes Projekt. |
+| „Was muss ich bis Dienstag erledigen?" galt in 2 von 5 Läufen nicht als Frage nach den eigenen Aufgaben. | Der Code ergänzt „dir zugewiesen", wenn die Frage es wörtlich sagt. |
+
+Offen bleibt dort ein Lauf von 70: „Welche Aufgaben kommen aus Asana?" wurde
+einmal als „alle, auch erledigte" verstanden. Die Frage lässt beides zu, und
+die Überschrift der Liste nennt, wie sie verstanden wurde.
 
 Weiter bestehende Schwächen, alle mit `gpt-oss:20b`:
 

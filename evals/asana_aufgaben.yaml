@@ -1,0 +1,73 @@
+# yaml-language-server: $schema=asana_aufgaben_schema.json
+# Erfundene Fälle für die Abfragen auf dem Asana-Spiegel: Übersetzt das Modell
+# die Frage in den richtigen Filter? Die Liste selbst schreibt der Code.
+# Heute ist in allen Fällen Freitag, der 20.11.2026. Aufbau: README, Abschnitt "Messen".
+name: asana_aufgaben
+cases:
+- name: "Meine Aufgaben dieser Woche"
+  inputs:
+    frage: "Was ist diese Woche bei mir fällig?"
+    heute: &heute 2026-11-20
+    aufgaben: &aufgaben
+    - {name: "Angebot prüfen", faellig: 2026-11-24, geaendert: 2026-11-19}
+    - {name: "Folien bauen", faellig: 2026-11-18}
+    - {name: "Protokoll schreiben", faellig: 2026-11-20}
+    - {name: "Vertrag ablegen", faellig: 2026-11-12, erledigt: true}
+    - {name: "Ohne Termin"}
+    - {name: "Schnittstelle abstimmen", faellig: 2026-11-27, mir: false, zustaendig: "Erika Muster", projekt: "Vertrieb Nord"}
+    - {name: "Review vorbereiten", faellig: 2026-12-02, mir: false, zustaendig: "Kim Beispiel", geaendert: 2026-11-18}
+    - {name: "Preisliste aktualisieren", faellig: 2026-11-19, mir: false, zustaendig: "Erika Muster", projekt: "Vertrieb Nord", geaendert: 2026-11-17}
+  evaluators:
+  - Aufgabenliste: {genau: ["Folien bauen", "Protokoll schreiben"]}
+- name: "Überfällig, egal bei wem"
+  inputs: {frage: "Was ist überfällig?", heute: *heute, aufgaben: *aufgaben}
+  evaluators:
+  - Aufgabenliste: {genau: ["Folien bauen", "Preisliste aktualisieren"]}
+- name: "Heute fällig"
+  inputs: {frage: "Was steht heute an?", heute: *heute, aufgaben: *aufgaben}
+  evaluators:
+  - Aufgabenliste: {genau: ["Protokoll schreiben"]}
+- name: "Nächste Woche, alle"
+  inputs: {frage: "Welche Aufgaben sind nächste Woche fällig?", heute: *heute, aufgaben: *aufgaben}
+  evaluators:
+  - Aufgabenliste: {genau: ["Angebot prüfen", "Schnittstelle abstimmen"]}
+- name: "Warten auf andere"
+  inputs: {frage: "Wo warte ich gerade auf andere?", heute: *heute, aufgaben: *aufgaben}
+  evaluators:
+  - Aufgabenliste: {genau: ["Schnittstelle abstimmen", "Review vorbereiten", "Preisliste aktualisieren"]}
+- name: "Aufgaben einer Person"
+  inputs: {frage: "Welche Aufgaben liegen bei Erika?", heute: *heute, aufgaben: *aufgaben}
+  evaluators:
+  - Aufgabenliste: {genau: ["Schnittstelle abstimmen", "Preisliste aktualisieren"]}
+- name: "Änderungen seit Montag, auch erledigte"
+  inputs: {frage: "Was hat sich seit Montag geändert?", heute: *heute, aufgaben: *aufgaben}
+  evaluators:
+  - Aufgabenliste: {genau: ["Angebot prüfen", "Review vorbereiten", "Preisliste aktualisieren"], zuerst: "Angebot prüfen"}
+- name: "Anzahl in einem Projekt"
+  inputs: {frage: "Wie viele offene Aufgaben gibt es im Vertrieb?", heute: *heute, aufgaben: *aufgaben}
+  evaluators:
+  - Aufgabenliste: {genau: ["Schnittstelle abstimmen", "Preisliste aktualisieren"], nur_anzahl: true}
+- name: "Erledigte Aufgaben"
+  inputs: {frage: "Was habe ich schon erledigt?", heute: *heute, aufgaben: *aufgaben}
+  evaluators:
+  - Aufgabenliste: {genau: ["Vertrag ablegen"]}
+- name: "Alles Offene ohne weitere Angabe"
+  inputs: {frage: "Welche Aufgaben kommen aus Asana?", heute: *heute, aufgaben: *aufgaben}
+  evaluators:
+  - Aufgabenliste: {genau: ["Angebot prüfen", "Folien bauen", "Protokoll schreiben", "Ohne Termin", "Schnittstelle abstimmen", "Review vorbereiten", "Preisliste aktualisieren"]}
+- name: "Meine Aufgaben bis zu einem Tag"
+  inputs: {frage: "Was muss ich bis Dienstag erledigen?", heute: *heute, aufgaben: *aufgaben}
+  evaluators:
+  - Aufgabenliste: {genau: ["Angebot prüfen", "Folien bauen", "Protokoll schreiben"]}
+- name: "Stichwort im Titel"
+  inputs: {frage: "Gibt es Aufgaben mit Angebot im Titel?", heute: *heute, aufgaben: *aufgaben}
+  evaluators:
+  - Aufgabenliste: {genau: ["Angebot prüfen"]}
+- name: "Unbekanntes Projekt wird gemeldet, nicht übergangen"
+  inputs: {frage: "Was ist im Projekt Marketing offen?", heute: *heute, aufgaben: *aufgaben}
+  evaluators:
+  - Aufgabenliste: {meldet: "Marketing"}
+- name: "Neues in einem Projekt, ohne Zeitangabe"
+  inputs: {frage: "Was gibts Neues im Vertrieb?", heute: *heute, aufgaben: *aufgaben}
+  evaluators:
+  - Aufgabenliste: {genau: ["Preisliste aktualisieren"]}

@@ -211,6 +211,24 @@ class TestConversation(AskCase):
         self.assertEqual(self.select("Was ist mit QG-3?").resolved, "")
         self.assertEqual(self.select("und der Aufwand?", self.select("Was ist mit QG-3?").focus).resolved, "")
 
+    def test_list_questions_about_asana_go_to_the_mirror_query(self) -> None:
+        routed = {
+            "Welche Aufgaben kommen aus Asana?": True,
+            "Was ist diese Woche fällig?": True,
+            "Wie viele offene Aufgaben habe ich?": True,
+            "Wo warte ich auf andere?": True,
+            "Was ist bei der Aufgabe Angebot prüfen offen?": False,  # Inhalt einer Aufgabe: Suche
+            "Welche Stories gibt es?": False,
+            "Welche Aufgaben hat die Story QG-3?": False,
+            "Was ist mit QG-3?": False,
+        }
+        for question, expected in routed.items():
+            self.assertEqual(ask.is_task_list_question(question), expected, question)
+
+    def test_without_a_mirror_list_questions_stay_with_the_search(self) -> None:
+        talk = ask.Conversation(self.index, saying("Dazu steht dort nichts."))
+        self.assertNotEqual(talk.ask("Welche Aufgaben sind bei Lieferanten fällig?").source, ask.TASK_LIST)
+
     def test_chat_commands(self) -> None:
         talk = ask.Conversation(self.index, saying("QG-3 hält Datensätze vor."))
         typed = iter(["/quellen", "Was ist mit QG-3?", "/quellen", "/neu", ""])

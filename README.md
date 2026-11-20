@@ -997,6 +997,70 @@ In der Suche erscheint jede Aufgabe als Eintrag der Art „Asana-Aufgabe":
    Stand: offen, fällig 24.11.2026 Zuständig: Alex Beispiel Projekt: Datenplattform, Abschnitt: In Arbeit …
 ```
 
+## Asana-Aufgaben abfragen
+
+Listen und Mengen aus dem [Asana-Spiegel](#asana-spiegel): was fällig ist, was
+sich geändert hat, wo du auf andere wartest.
+
+```bash
+.venv/bin/python -m local_agents.asana_tasks                       # offene Aufgaben, die dir zugewiesen sind
+.venv/bin/python -m local_agents.asana_tasks "Was ist diese Woche bei mir fällig?"
+.venv/bin/python -m local_agents.asana_tasks "Was hat sich seit Montag geändert?"
+.venv/bin/python -m local_agents.asana_tasks "Wo warte ich auf andere?"
+.venv/bin/python -m local_agents.asana_tasks "Wie viele offene Aufgaben gibt es im Projekt Vertrieb?"
+```
+
+```text
+1 Aufgabe (offene Aufgaben, dir zugewiesen, überfällig).
+- Folien bauen · fällig Mi 18.11., überfällig seit 2 Tagen · Datenplattform / In Arbeit
+  https://app.asana.com/0/0/…
+Stand: Asana-Spiegel, vor 3 Std abgeglichen.
+```
+
+Im [Gesprächs-Agenten](#gesprächs-agent) geht dasselbe ohne eigenen Befehl:
+Eine Listenfrage zu Asana („welche Aufgaben …", „was ist … fällig", „wie
+viele …") leitet er hierher weiter. Fragen nach dem Inhalt einer Aufgabe
+beantwortet er weiter über die Suche.
+
+Der Ablauf:
+
+1. **Übersetzen (Modell):** Aus der Frage wird ein Filter mit festen Feldern:
+   wem zugewiesen (mir, anderen, egal), Stand (offen, erledigt, egal),
+   Fälligkeit, Änderung, Projekt, Person, Stichworte im Titel, nur die Anzahl.
+   Zeitangaben gibt das Modell in deinen Worten wieder.
+2. **Prüfen und rechnen (Code):** Der Code ergänzt, was die Frage wörtlich
+   nennt und das Modell ausgelassen hat („muss ich", „bei mir", „Projekt X"),
+   rechnet die Zeitangaben in Tage um und sucht das Projekt im Bestand. Geht eine Zeitangabe nicht auf, geht der
+   Filter zurück ans Modell. Gibt es das Projekt nicht oder mehrfach, nennt
+   die Antwort die Projekte zur Wahl, statt die Angabe fallen zu lassen.
+3. **Auflisten (Code):** Der Code filtert, sortiert und schreibt die Liste.
+   Das Modell sieht die Aufgaben nicht und formuliert nichts; es kann keine
+   Aufgabe erfinden, weglassen oder falsch zählen.
+
+Über der Liste steht in Klammern, wie der Filter verstanden wurde; daran
+erkennst du ein Missverständnis. Darunter steht das Alter des Spiegels.
+
+Zeitangaben, die der Code versteht: heute, morgen, gestern, ein Wochentag, ein
+Datum (24.11.), diese/nächste/letzte Woche, diesen/nächsten/letzten Monat,
+letzte oder nächste N Tage oder Wochen, seit …, ab …, bis …, überfällig. Bei
+Änderungen meint ein Wochentag den letzten, bei Fälligkeiten den nächsten.
+„Was gibt es Neues?" ohne Zeitangabe meint die letzten sieben Tage.
+
+Grenzen:
+
+- **So aktuell wie der Spiegel.** Vor wichtigen Fragen abgleichen.
+- **Ein Filter, keine Auswertung.** „Welches Projekt hat die meisten offenen
+  Aufgaben?" oder „was ist am dringendsten?" geht damit nicht.
+- **„Geändert" heißt:** Änderungsdatum der Aufgabe oder letzter Kommentar, was
+  später ist. Was sich geändert hat, steht nicht dabei, nur der letzte
+  Kommentar.
+- **„Warten auf andere" heißt:** Aufgaben, denen du folgst und die jemand
+  anderem zugewiesen sind. Ob du wirklich wartest, weiß der Code nicht.
+- **Das Projekt muss im Spiegel vorkommen,** also mindestens eine deiner oder
+  gefolgten Aufgaben enthalten.
+
+Anderes Modell: `asana_aufgaben = "…"` unter `[models]` im Profil.
+
 ## Gesprächs-Agent
 
 Mit ihm unterhältst du dich über den Inhalt der Stories. Er liest nur; Stories
@@ -1037,6 +1101,10 @@ Je Frage läuft dasselbe Muster wie beim Nachrichten-Agenten:
    | schließt an die vorige Antwort an: beginnt mit „und", verweist („dazu", „dort", „sie") oder hat höchstens zwei Inhaltsworte | die Story der vorigen Antwort |
    | fragt nach dem Überblick: „welche Stories", „Übersicht", „Reihenfolge" | die Gliederung des Features, ohne genanntes Feature die Liste aller Features |
    | sonst | die besten vier Treffer der [Suche](#suche), in einem genannten Feature zuerst dort |
+
+   Vor alledem: Eine Listenfrage zu Asana-Aufgaben („welche Aufgaben …", „was
+   ist … fällig") geht an die [Abfrage auf dem Asana-Spiegel](#asana-aufgaben-abfragen),
+   wenn es den Spiegel gibt. Dort schreibt der Code die Liste.
 
    Ein Feature gilt als genannt, wenn die Frage ein Wort enthält, das nur in
    seinem Titel steht. Zur Auswahl kommt immer die Gliederung des Features:

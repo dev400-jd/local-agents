@@ -446,7 +446,7 @@ class TestCaseFiles(unittest.TestCase):
         cases = evals.load_cases([evals.REPO_CASES])
         self.assertEqual(
             sorted(cases),
-            ["fragen", "nachricht", "rueckmeldung", "scrum_master", "status", "stories", "suche", "termin"],
+            ["asana_aufgaben", "fragen", "nachricht", "rueckmeldung", "scrum_master", "status", "stories", "suche", "termin"],
         )
         self.assertGreaterEqual(len(cases["scrum_master"]), 15)
         self.assertGreaterEqual(len(cases["rueckmeldung"]), 12)
