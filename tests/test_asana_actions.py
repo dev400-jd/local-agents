@@ -392,11 +392,36 @@ class TestAct(ActionCase):
         self.assertEqual(len(self.journal.rows()), 1)
         self.asana.write = original
 
+    def test_sentences_for_many_tasks_or_many_actions_never_reach_the_model(self) -> None:
+        refused = {
+            "Schließe alle Aufgaben ab": "Mehrere Aufgaben auf einmal",
+            "Hak sämtliche offenen Tasks ab": "Mehrere Aufgaben auf einmal",
+            "Setz beide Aufgaben auf Montag": "Mehrere Aufgaben auf einmal",
+            "Lösch alles": "Mehrere Aufgaben auf einmal",
+            "Schließe Folien bauen ab und leg eine Aufgabe Druck an": "mehrere Aktionen",
+            "Hak Angebot prüfen ab, dann verschieb Folien bauen auf Montag": "mehrere Aktionen",
+        }
+        for sentence, expected in refused.items():
+            self.printed.clear()
+            # Ein Modell, das trotzdem eine Aktion liefern wuerde, wird gar nicht erst gefragt.
+            result = self.act({"aktion": "abschliessen", "aufgabe": "Angebot prüfen"}, sentence=sentence)
+            self.assertEqual(result, "rueckfrage", sentence)
+            self.assertIn(expected, self.printed[0], sentence)
+        self.assertEqual(self.asana.written, [])
+        for fine in ("Leg die Aufgabe Angebot prüfen und versenden an", "Hak Angebot prüfen ab", "Leg die Aufgabe Alle Jahre wieder an"):
+            aa.refuse_by_wording(fine)
+
+    def test_creating_an_existing_task_with_a_section_means_moving_it(self) -> None:
+        plan = self.plan(aktion="anlegen", titel="Folien bauen", abschnitt="In Arbeit")
+        self.assertEqual((plan.action, plan.changes), ("abschnitt", (("Abschnitt", "Offen", "In Arbeit"),)))
+        with self.assertRaises(Clarify):  # ohne Abschnitt bleibt es eine Rueckfrage
+            self.plan(aktion="anlegen", titel="Folien bauen")
+
     def test_unusable_model_answer_counts_as_unclear(self) -> None:
         def broken(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return structured_reply(info, {"aktion": "loeschen"})
 
-        result = aa.act("Lösch alles", PROFILE, FunctionModel(broken), self.asana.read, self.asana.write, self.journal, NOW, lambda prompt: "j", self.printed.append)
+        result = aa.act("Lösch die Aufgabe Folien bauen", PROFILE, FunctionModel(broken), self.asana.read, self.asana.write, self.journal, NOW, lambda prompt: "j", self.printed.append)
         self.assertEqual(result, "rueckfrage")
         self.assertIn("Das kann ich nicht ausführen.", self.printed[0])
         self.assertEqual(self.asana.written, [])

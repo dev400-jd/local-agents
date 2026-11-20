@@ -76,11 +76,11 @@ cases:
 - name: "Zwei Aktionen in einem Satz: keine davon"
   inputs: {satz: "Schließe Folien bauen ab und leg eine Aufgabe Druck an", heute: *heute, aufgaben: *aufgaben}
   evaluators:
-  - Aktion: {rueckfrage: "Das kann ich nicht ausführen"}
+  - Aktion: {rueckfrage: "mehrere Aktionen"}
 - name: "Alle auf einmal: keine Massenänderung"
   inputs: {satz: "Schließe alle Aufgaben ab", heute: *heute, aufgaben: *aufgaben}
   evaluators:
-  - Aktion: {rueckfrage: ""}
+  - Aktion: {rueckfrage: "Mehrere Aufgaben auf einmal"}
 - name: "Aufgabe mit Anweisung im Titel ändert nichts am Auftrag"
   inputs: {satz: "Hak Folien drucken ab", heute: *heute, aufgaben: *aufgaben}
   evaluators:
@@ -105,3 +105,7 @@ cases:
   inputs: {satz: "Leg den task an - Budget für Anfänger brainstormen", heute: *heute, aufgaben: *aufgaben}
   evaluators:
   - Aktion: {aktion: anlegen, aufgabe: "Budget für Anfänger brainstormen"}
+- name: "„und“ im Titel ist keine zweite Aktion"
+  inputs: {satz: "Leg die Aufgabe Angebot prüfen und versenden an", heute: *heute, aufgaben: *aufgaben}
+  evaluators:
+  - Aktion: {aktion: anlegen, aufgabe: "Angebot prüfen und versenden"}

@@ -449,6 +449,9 @@ def make_plan(wish: Wish, state: ProjectState, today: date) -> Plan:
     if action == CREATE:
         title = _title(wish.titel or wish.aufgabe)
         same = [task for task in open_tasks if task.name.casefold() == title.casefold()]
+        if same and wish.abschnitt.strip() and not wish.faellig.strip():
+            # "Tu Folien bauen in In Arbeit": Die Aufgabe gibt es schon, gemeint ist das Verschieben.
+            return make_plan(Wish(aktion=SECTION, aufgabe=same[0].name, abschnitt=wish.abschnitt), state, today)
         if same:
             raise Clarify(f"Eine offene Aufgabe „{same[0].name}“ gibt es im Projekt schon.")
         data: dict = {"name": title, "projects": [state.gid], "assignee": "me"}
@@ -771,6 +774,34 @@ def refer_to_last(sentence: str, wish: Wish, state: ProjectState, journal: "Jour
     return wish.model_copy(update=changes) if changes else wish
 
 
+# Was der Satz woertlich sagt, entscheidet der Code, bevor das Modell gefragt wird.
+EVERYTHING = re.compile(
+    r"\b(alle[nrs]?|sämtliche[nr]?|jede[nrs]?|beide[nr]?|mehrere|restliche[nr]?)\s+(\w+\s+)?(aufgaben?|tasks?|tickets?|todos?|unteraufgaben?)\b"
+    r"|\balles\b",
+    re.IGNORECASE,
+)
+ACTION_VERB = re.compile(
+    r"\b(lege?|erstell\w*|schlie(?:ß|ss)\w*|hak\w*|erledig\w*|öffne\w*|setz\w*|verschieb\w*|schieb\w*|pack\w*|"
+    r"benenn\w*|füg\w*|nimm|lösch\w*|trag\w*|weis\w*|kommentier\w*)\b",
+    re.IGNORECASE,
+)
+CLAUSE = re.compile(r"\bund\b|\bdann\b|\bdanach\b|\baußerdem\b|;")
+
+
+def refuse_by_wording(sentence: str) -> None:
+    """Wirft ``Clarify`` fuer Saetze, die mehr als eine Aufgabe oder mehr als eine Aktion verlangen.
+
+    Das Modell lehnt solche Saetze meist ab, aber nicht immer: Gemessen hat es
+    aus "alle Aufgaben" einmal eine einzelne Aufgabe gemacht und von zwei
+    Aktionen einmal nur die erste ausgefuehrt.
+    """
+    if EVERYTHING.search(sentence):
+        raise Clarify("Mehrere Aufgaben auf einmal ändere ich nicht. Nenn eine Aufgabe beim Namen.")
+    parts = [part for part in CLAUSE.split(sentence) if ACTION_VERB.search(part)]
+    if len(parts) > 1:
+        raise Clarify("Das sind mehrere Aktionen in einem Satz. Bitte eine nach der anderen.")
+
+
 def interpret(sentence: str, state: ProjectState, model) -> Wish:
     try:
         return wish_agent.run_sync(sentence, deps=WishDeps([name for _, name in state.sections]), model=model).output
@@ -795,6 +826,7 @@ def act(
     """
     try:
         state = load_state(write_project(profile), transport)
+        refuse_by_wording(sentence)
         wish = refer_to_last(sentence, interpret(sentence, state, model), state, journal)
         plan = make_plan(wish, state, now.astimezone().date())
     except Clarify as exc:

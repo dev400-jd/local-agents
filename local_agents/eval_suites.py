@@ -1050,6 +1050,10 @@ def aktion_task(model: object) -> Callable[[AktionInputs], AktionOutput]:
                 for number, item in enumerate(inputs.aufgaben)
             ),
         )
+        try:
+            asana_actions.refuse_by_wording(inputs.satz)
+        except asana_actions.Clarify as exc:
+            return AktionOutput(rueckfrage=str(exc))
         with capture_run_messages() as messages:
             wish = asana_actions.interpret(inputs.satz, state, model)
         said = model_said(messages)
