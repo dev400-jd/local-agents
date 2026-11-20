@@ -77,6 +77,8 @@ class Profile:
     # Anrede in Nachrichtenentwuerfen (message_agent.py): "du" oder "Sie".
     message_form: str = "du"
     # Kalenderwache (watch.py): Aenderungen als macOS-Mitteilung zeigen, vorlesen.
+    # Embedding-Modell der Bedeutungssuche (search.py); leer = nur Wortsuche.
+    search_embeddings: str = ""
     watch_notify: bool = True
     watch_speak: bool = False
     # Sprachausgabe der Kurzfassung: an/aus und die macOS-Stimme.
@@ -280,6 +282,7 @@ def load_profile(path: Path | None = None) -> Profile:
         telegram_ask_at=tuple(f"{int(c.split(':')[0]):02d}:{c.split(':')[1]}" for c in ask_at),
         plan_skip=tuple(word.casefold() for word in planning.get("skip", [])),
         sync_enabled=bool(planning.get("sync", True)),
+        search_embeddings=str(data.get("search", {}).get("embeddings", "")).strip(),
         watch_notify=bool(data.get("watch", {}).get("notify", True)),
         watch_speak=bool(data.get("watch", {}).get("speak", False)),
         state=state,

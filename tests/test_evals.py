@@ -453,7 +453,7 @@ class TestCaseFiles(unittest.TestCase):
         results = evals.evaluate("suche", cases, None, evals.NO_MODEL, 1, None, out=lines.append)
         self.assertTrue(lines[0].startswith("suche · ohne Modell · 1 Lauf je Fall"), lines[0])
         failed = [result.name for result in results if result.passed < result.runs]
-        self.assertEqual(len(failed), 3, lines)
+        self.assertEqual(len(failed), 3, lines)  # nur mit Embedding-Modell loesbar
         self.assertTrue(all(name.startswith("Grenze der Wortsuche") for name in failed), failed)
 
     def test_schema_files_in_the_repo_are_current(self) -> None:

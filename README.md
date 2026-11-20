@@ -818,7 +818,7 @@ Nachrichten, auch wenn sie nur für einen Empfänger gemeint war.
 
 ## Suche
 
-Eine lokale Suche über das eigene Material, ohne Modell. Sie ist der Unterbau
+Eine lokale Suche über das eigene Material, ohne Sprachmodell. Sie ist der Unterbau
 für Agenten, die Inhalte brauchen: Der Code holt die passenden Einträge, das
 Modell bekommt nur diese.
 
@@ -857,26 +857,76 @@ nächste Aufruf baut ihn neu. Vor jeder Suche wird er abgeglichen, und
 geschrieben wird nur, was sich geändert hat. Er enthält die Texte der Stories
 im Klartext und gehört wie die Datenbank nicht ins Repo.
 
-Gesucht wird nach Worten (Volltextsuche von SQLite, Rangfolge BM25; ein Treffer
-im Titel zählt vierfach):
+### Wortsuche
+
+Die Grundlage ist eine Suche nach Worten (Volltextsuche von SQLite, Rangfolge
+BM25; ein Treffer im Titel zählt vierfach). Sie braucht kein Modell:
 
 - Groß- und Kleinschreibung und Umlaute spielen keine Rolle („Uberwachung"
   findet „Überwachung"; „Ueberwachung" nicht).
 - Endungen zählen nicht: „Schnittstellen" findet „Schnittstelle".
-- Füllwörter der Frage werden übergangen, die übrigen Worte mit ODER
-  verbunden. Wer mehr und seltenere Worte trifft, steht weiter vorn.
+- Füllwörter der Frage werden übergangen, auch Auftragsworte wie „fasse
+  zusammen" oder „erkläre". Die übrigen Worte sind mit ODER verbunden; wer
+  mehr und seltenere trifft, steht weiter vorn.
 - Ein Story-Kürzel in der Frage („QG-3") holt diese Story und ihre
   Bemerkungen nach vorn, auch wenn sonst kein Wort passt.
+- Beginnt kein Wort im Bestand wie ein Wort der Frage, wird es als Wortteil
+  gesucht: „Frist" findet „Aufbewahrungsfrist" (ab fünf Buchstaben).
 
-Was die Wortsuche nicht kann, steht als Messfall fest (siehe [Messen](#messen)):
+### Bedeutungssuche
 
-- **Bedeutung:** „einloggen" findet nicht „Zugangsverwaltung".
-- **Wortteile:** „Frist" findet nicht „Aufbewahrungsfrist".
-- **Umschreibungen:** „wenn ein Partner nichts schickt" findet die Story zur
-  Überwachung der Einlieferungen nicht an erster Stelle.
+Mit einem Embedding-Modell findet die Suche auch, was anders formuliert ist:
+„Wer darf sich einloggen?" findet die Story „Zugangsverwaltung", obwohl kein
+Wort übereinstimmt. Einschalten:
 
-Ob eine Bedeutungssuche (Embeddings) diese Fälle löst, ohne die anderen zu
-verschlechtern, entscheidet die Messung.
+```bash
+ollama pull bge-m3
+```
+
+```toml
+# im Profil
+[search]
+embeddings = "bge-m3"
+```
+
+Das Modell (rund 1,2 GB, mehrsprachig) läuft lokal über Ollama und passt neben
+das Sprachmodell. Es übersetzt jeden Eintrag einmal in einen Vektor; beim
+ersten Aufruf dauert das für 125 Einträge rund zehn Sekunden, danach wird nur
+neu berechnet, was sich geändert hat. Die Vektoren liegen im Index. Ein
+Wechsel des Modells berechnet alle neu.
+
+Bei einer Frage entstehen zwei Ranglisten, eine nach Worten und eine nach
+Bedeutung, und ein Eintrag steht umso weiter vorn, je weiter vorn er in beiden
+steht (Reciprocal Rank Fusion). Der Rang nach Bedeutung zählt doppelt: Das
+Embedding liest die ganze Frage, während die Wortsuche schon ein einzelnes
+gemeinsames Wort belohnt. Einträge, deren Nähe zur Frage unter 0,50 liegt,
+gelten nach Bedeutung als unpassend. Die Ausgabe nennt zu jedem Treffer, wodurch
+er gefunden wurde, und die Nähe:
+
+```text
+1. AN-3: Zugangsverwaltung und Berechtigungen (Anbindung der Lieferanten)
+   Story · Kunde ACME · anbindung.md · gefunden über Bedeutung, Nähe 0.54
+```
+
+Antwortet das Embedding-Modell nicht, gilt die Wortsuche, und die Ausgabe sagt
+das.
+
+Grenzen:
+
+- **Die Schwelle ist an 25 erfundenen Fragen eingestellt.** Passende Einträge
+  lagen dort bei 0,54 bis 0,75, unpassende bei höchstens 0,49 (Fragen, die
+  nur aus einem Kürzel oder einem Wortteil bestehen, nicht mitgezählt). Der Abstand ist
+  klein; mit echten Texten kann er anders liegen. Zeigt die Ausgabe passende
+  Treffer knapp über 0,50 oder fehlen welche, ist das ein Fall für
+  `evals merke suche`.
+- **Schwelle, Gewicht und Füllwörter habe ich an denselben Fällen
+  eingestellt, an denen gemessen wird.** Dass alle bestehen, belegt deshalb
+  wenig; echte Fälle fehlen.
+- **Fragen nach dem Aufbau** („was kommt als Letztes im Feature?") beantwortet
+  keine der beiden Suchen.
+- **Ein Allerweltswort genügt der Wortsuche für einen Treffer.** Die
+  Bedeutungssuche nimmt solche Treffer nicht wieder heraus, sie stuft sie nur
+  herab.
 
 ## User Stories als Markdown
 
@@ -1446,11 +1496,18 @@ Beide werden gelesen; der Dateiname beginnt mit dem Namen des Agenten
   echte Fälle aus dem Alltag. Sie enthalten Story-Inhalte und Termintitel und
   bleiben deshalb außerhalb des Repos.
 
-Die Suche (`suche.yaml`) wird ohne Modell gemessen, also mit einem Lauf je
-Fall und in Sekundenbruchteilen; ihre Fälle laufen auch in den Tests mit. Die
-Beispieldokumente dazu liegen in `evals/suche_vault/`. Drei Fälle, deren Name
-mit „Grenze der Wortsuche" beginnt, scheitern mit Absicht: Sie halten fest, was
-eine Bedeutungssuche besser machen müsste.
+Die Suche (`suche.yaml`) wird ohne Sprachmodell gemessen, also mit einem Lauf
+je Fall und in Sekundenbruchteilen. Die Beispieldokumente dazu liegen in
+`evals/suche_vault/`.
+
+```bash
+.venv/bin/python -m local_agents.evals suche                   # nur Wortsuche; läuft auch in den Tests mit
+.venv/bin/python -m local_agents.evals suche --modell bge-m3   # mit Bedeutungssuche
+```
+
+Drei Fälle, deren Name mit „Grenze der Wortsuche" beginnt, scheitern ohne
+Embedding-Modell mit Absicht. Stand 2026-11-20: Wortsuche 18 von 21,
+mit `bge-m3` 21 von 21.
 
 Geht im Alltag etwas schief, wird daraus zuerst ein Fall und dann die
 Korrektur. So wächst die Sammlung an den Stellen, an denen das Modell wirklich

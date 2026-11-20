@@ -251,7 +251,7 @@ def report(agent: str, model_name: str, results: list[CaseResult], state: str) -
     runs = results[0].runs if results else 0
     lines = [
         f"{agent} · {model_name} · "
-        + ("" if model_name == NO_MODEL else f"Ausgabe {OUTPUT_MODE} · ")
+        + (f"Ausgabe {OUTPUT_MODE} · " if AGENTS[agent].uses_model else "")
         + f"{runs} {'Lauf' if runs == 1 else 'Läufe'} je Fall · Stand {state or 'unbekannt'}"
     ]
     for result in results:
@@ -354,9 +354,10 @@ def main(argv: list[str]) -> int:
         results = evaluate(
             agent,
             selected,
-            ollama_model(name) if uses_model else None,
-            (name or MODEL_NAME) if uses_model else NO_MODEL,
-            # Ohne Modell kommt jedes Mal dasselbe heraus.
+            # Ohne Sprachmodell (die Suche): --modell nennt das Embedding-Modell, sonst nur Wortsuche.
+            ollama_model(name) if uses_model else (options["--modell"] or None),
+            (name or MODEL_NAME) if uses_model else (options["--modell"] or NO_MODEL),
+            # Ohne Sprachmodell kommt jedes Mal dasselbe heraus.
             int(options["--laeufe"]) if uses_model else 1,
             # Ein Teil-Lauf wuerde den Vergleich verfaelschen, also nicht festhalten.
             None if word else private_dir() / RESULTS_NAME,

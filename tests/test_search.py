@@ -49,6 +49,8 @@ class TestQuery(unittest.TestCase):
             search.fts_query("Wie steht es um die Schnittstellen zum Lager?"),
             '"schnittstell"* OR "lager"*',
         )
+        # Auch Auftragsworte sind Fuellwoerter: Gesucht wird der Inhalt, nicht die Bitte.
+        self.assertEqual(search.fts_query("Fasse bitte kurz zusammen, was das nächste Review braucht"), '"review"* OR "braucht"*')
         self.assertEqual(search.fts_query("der die das"), "")
         self.assertEqual(search.fts_query("Verstoß am 20."), '"verstoß"* OR "20"')
 
@@ -93,6 +95,14 @@ class TestIndex(unittest.TestCase):
         self.assertEqual(len(self.index.search("Prüfregeln Einkauf Lager", limit=2)), 2)
         self.assertIn("Verstöße", self.index.search("Verstöße")[0].snippet)
 
+    def test_word_part_is_found_if_no_word_starts_like_it(self) -> None:
+        self.index.update(entries() + [Passage("story:3", STORY, "QG-3: Quarantäne", "Die Aufbewahrungsfrist beträgt 30 Tage.")])
+        hit = self.index.search("Frist")[0]
+        self.assertEqual((hit.passage.ref, hit.found_by), ("story:3", search.BY_PART))
+        self.assertIn("Aufbewahrungsfrist", hit.snippet)
+        self.assertEqual(self.refs("100%_"), [])  # Sonderzeichen sind keine Platzhalter
+        self.assertEqual(self.refs("Rist"), [])  # zu kurz fuer die Suche nach Wortteilen
+
     def test_update_writes_only_what_changed(self) -> None:
         self.assertEqual(self.index.update(entries()), Changes())
         changed = entries()[:3]
@@ -102,6 +112,96 @@ class TestIndex(unittest.TestCase):
         self.assertEqual(self.refs("geklärt"), ["bemerkung:1"])
         self.assertEqual(self.refs("Einkauf vertraut"), [])
         self.assertEqual(search.count_line(self.index.counts()), "Im Index: 2 Stories, 1 Bemerkung.")
+
+
+def fake_embedder(calls: list | None = None):
+    """Bildet Texte auf vier Themen ab: Zugang, Bericht, Preise, alles andere."""
+    topics = (("zugang", "einloggen", "anmeld"), ("bericht", "auswertung"), ("preis", "schwellenwert"))
+
+    def embed(texts: list[str]) -> list[list[float]]:
+        if calls is not None:
+            calls.append(list(texts))
+        vectors = []
+        for text in texts:
+            lower = text.lower()
+            vector = [float(any(word in lower for word in words)) for words in topics]
+            vectors.append(vector + [0.0 if any(vector) else 1.0])
+        return vectors
+
+    return embed
+
+
+class TestMeaning(unittest.TestCase):
+    def setUp(self) -> None:
+        self.index = Index(":memory:")
+        self.addCleanup(self.index.close)
+        self.passages = [
+            Passage("story:1", STORY, "AN-3: Zugangsverwaltung", "Zugänge für Lieferanten anlegen und sperren."),
+            Passage("story:2", STORY, "QG-2: Wochenbericht", "Bericht über Verstöße, Abgleich der Stammdaten."),
+            Passage("story:3", STORY, "QG-4: Schwellenwerte", "Ausreißer bei Preisen markieren."),
+        ]
+        self.index.update(self.passages)
+        self.calls: list = []
+        self.embedder = fake_embedder(self.calls)
+
+    def test_vectors_are_computed_once_and_follow_changes(self) -> None:
+        self.assertEqual(self.index.embed_missing(self.embedder, "modell-a"), 3)
+        self.assertEqual(self.index.embed_missing(self.embedder, "modell-a"), 0)
+        self.assertEqual(self.calls[0][0], "AN-3: Zugangsverwaltung\nZugänge für Lieferanten anlegen und sperren.")
+        changed = [self.passages[0], Passage("story:2", STORY, "QG-2: Wochenbericht", "Neu gefasst."), self.passages[2]]
+        self.index.update(changed)
+        self.assertEqual((self.index.vector_count(), self.index.embed_missing(self.embedder, "modell-a")), (2, 1))
+        # Ein anderes Modell rechnet anders: alle Vektoren neu.
+        self.assertEqual(self.index.embed_missing(self.embedder, "modell-b"), 3)
+        self.index.update(self.passages[:1])
+        self.assertEqual(self.index.vector_count(), 1)
+
+    def test_meaning_finds_what_no_word_matches(self) -> None:
+        self.index.embed_missing(self.embedder, "m")
+        self.assertEqual(self.index.search("Wer darf sich einloggen?"), [])
+        hit = self.index.search("Wer darf sich einloggen?", embedder=self.embedder)[0]
+        self.assertEqual((hit.passage.ref, hit.found_by, round(hit.similarity, 2)), ("story:1", search.BY_MEANING, 1.0))
+
+    def test_both_rankings_are_merged_and_meaning_counts_double(self) -> None:
+        self.index.embed_missing(self.embedder, "m")
+        # Das Wort "Stammdaten" steht nur im Wochenbericht, gemeint ist der Zugang.
+        hits = self.index.search("Stammdaten einloggen", embedder=self.embedder)
+        self.assertEqual([(hit.passage.ref, hit.found_by) for hit in hits], [("story:1", search.BY_MEANING), ("story:2", search.BY_WORD)])
+        both = self.index.search("Wochenbericht", embedder=self.embedder)[0]
+        self.assertEqual((both.passage.ref, both.found_by), ("story:2", search.BY_BOTH))
+
+    def test_unrelated_question_finds_nothing_and_key_stays_first(self) -> None:
+        self.index.embed_missing(self.embedder, "m")
+        self.assertEqual(self.index.search("Wie wird das Wetter?", embedder=self.embedder), [])
+        self.index.update(self.passages + [Passage("story:4", STORY, "XY-1: Sonstiges", "Ganz anderes.", key="xy-1")])
+        self.index.embed_missing(self.embedder, "m")
+        hits = self.index.search("Bericht zu xy-1", embedder=self.embedder)
+        self.assertEqual([hit.passage.ref for hit in hits][:2], ["story:4", "story:2"])
+        self.assertEqual(hits[0].found_by, search.BY_KEY)
+
+    def test_without_vectors_the_word_search_still_answers(self) -> None:
+        hits = self.index.search("Wochenbericht", embedder=self.embedder)
+        self.assertEqual([(hit.passage.ref, hit.found_by) for hit in hits], [("story:2", search.BY_WORD)])
+
+    def test_profile_switches_meaning_on_and_failure_falls_back(self) -> None:
+        notes: list[str] = []
+        self.assertIsNone(search.prepare_meaning(self.index, Profile(), notes))
+        self.assertEqual(notes, [])
+
+        def broken(model: str):
+            def embed(texts: list[str]) -> list[list[float]]:
+                raise search.EmbeddingError("Ollama ist nicht erreichbar")
+
+            return embed
+
+        original = search.ollama_embedder
+        search.ollama_embedder = broken
+        self.addCleanup(setattr, search, "ollama_embedder", original)
+        self.assertIsNone(search.prepare_meaning(self.index, Profile(search_embeddings="bge-m3"), notes))
+        self.assertEqual(notes, ["Bedeutungssuche nicht verfügbar, nur Wortsuche: Ollama ist nicht erreichbar"])
+        search.ollama_embedder = lambda model: self.embedder
+        self.assertIsNotNone(search.prepare_meaning(self.index, Profile(search_embeddings="bge-m3"), notes))
+        self.assertEqual(self.index.vector_count(), 3)
 
 
 class TestSources(unittest.TestCase):

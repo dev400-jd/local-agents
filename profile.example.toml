@@ -65,6 +65,11 @@ sync = true
 notify = true    # macOS-Mitteilung
 speak = false    # zusaetzlich vorlesen
 
+# Suche (python -m local_agents.search): Mit einem Embedding-Modell findet sie
+# auch nach Bedeutung, nicht nur nach Worten. Vorher: ollama pull bge-m3
+# [search]
+# embeddings = "bge-m3"
+
 # Nachrichten-Agent (python -m local_agents.message_agent): Anrede in den
 # Entwuerfen, "du" oder "Sie". Der Gruss am Ende nimmt den Vornamen aus [person].
 [messages]

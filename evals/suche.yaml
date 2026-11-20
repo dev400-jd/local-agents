@@ -2,9 +2,9 @@
 # Erfundene Fälle für die Suche: Steht der richtige Eintrag vorn? Gemessen wird
 # ohne Modell, also ein Lauf je Fall. Die Dokumente liegen in evals/suche_vault.
 # Aufbau: README, Abschnitt "Messen".
-# Die letzten drei Fälle zeigen, was die reine Wortsuche nicht kann (Bedeutung,
-# Wortteile). Sie scheitern mit Absicht und sind der Maßstab für die
-# Bedeutungssuche.
+# Fälle, deren Name mit "Grenze der Wortsuche" beginnt, scheitern ohne
+# Embedding-Modell mit Absicht: Sie zeigen, was nur die Bedeutungssuche findet
+# (python -m local_agents.evals suche --modell bge-m3).
 name: suche
 cases:
 - name: "Stichworte aus dem Titel"
@@ -101,7 +101,7 @@ cases:
     bemerkungen: *bemerkungen
   evaluators:
   - Treffer: {zuerst: "AN-3"}
-- name: "Grenze der Wortsuche: Wortteil mitten im Wort"
+- name: "Wortteil mitten im Wort"
   inputs:
     frage: "Frist"
     ordner: *vault
@@ -115,3 +115,45 @@ cases:
     bemerkungen: *bemerkungen
   evaluators:
   - Treffer: {zuerst: "AN-4"}
+- name: "Umschreibung mit einem gemeinsamen Wort"
+  inputs:
+    frage: "Wie kommen kleine Firmen mit ihren Daten ins System?"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Treffer: {erwartet: ["AN-1"], unter_den_ersten: 2}
+- name: "Grenze der Wortsuche: häufiges Wort lenkt ab"
+  inputs:
+    frage: "Meldung bei ausbleibender Lieferung"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Treffer: {zuerst: "AN-4"}
+- name: "Fremdes Thema: kein Treffer"
+  inputs:
+    frage: "Rezept für Apfelkuchen"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Treffer: {leer: true}
+- name: "Bitte ohne Inhalt: kein Treffer"
+  inputs:
+    frage: "Kannst du mir helfen?"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Treffer: {leer: true}
+- name: "Frage nach einem Punkt aus einer Liste"
+  inputs:
+    frage: "Wer pflegt die Schwellenwerte?"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Treffer: {erwartet: ["Offene Fragen"], unter_den_ersten: 2}
+- name: "Fremdes Thema mit Allerweltswort: kein Treffer"
+  inputs:
+    frage: "Wann ist die nächste Betriebsversammlung?"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Treffer: {leer: true}

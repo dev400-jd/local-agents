@@ -17,7 +17,8 @@ abgeleitet: Loeschen schadet nicht, der naechste Aufruf baut ihn neu. Vor jeder
 Suche wird er abgeglichen; geschrieben wird nur, was sich geaendert hat.
 
 Gesucht wird nach Worten (Volltextsuche von SQLite, Rangfolge BM25), ohne
-Modell. Was die Wortsuche fuer deutsche Texte tut:
+Modell. Steht im Profil unter ``[search]`` ein Embedding-Modell, kommt die
+Bedeutungssuche dazu (siehe README). Was die Wortsuche fuer deutsche Texte tut:
 - Gross- und Kleinschreibung und Umlaute spielen keine Rolle,
 - Endungen zaehlen nicht ("Schnittstellen" findet "Schnittstelle"),
 - Fuellwoerter der Frage werden uebergangen,
@@ -32,9 +33,11 @@ import re
 import sqlite3
 import sys
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
+
+import numpy as np
 
 from local_agents import stories
 from local_agents.meeting_types import BY_ID
@@ -57,6 +60,17 @@ DEFAULT_LIMIT = 5
 MAX_PASSAGE_CHARS = 2400
 TITLE_WEIGHT, TEXT_WEIGHT = 4.0, 1.0
 SNIPPET_TOKENS = 24
+# Bedeutungssuche: Eintraege, deren Naehe zur Frage darunter liegt, gelten als
+# unpassend. An den Messfaellen eingestellt (README, Abschnitt "Suche").
+MIN_SIMILARITY = 0.50
+EMBED_BATCH = 16
+# So viele Kandidaten je Liste gehen in die gemeinsame Rangfolge ein.
+CANDIDATES = 20
+# Reciprocal Rank Fusion: Ein Eintrag bekommt je Liste 1 / (RRF_K + Rang).
+RRF_K = 60
+# Die Bedeutungssuche liest die ganze Frage, die Wortsuche belohnt schon ein
+# einzelnes gemeinsames Wort. Deshalb zaehlt der Rang nach Bedeutung doppelt.
+MEANING_WEIGHT = 2.0
 
 STORY_KEY = re.compile(r"\b([A-Za-z]{1,8})-(\d+[a-z]?)\b")
 WORD = re.compile(r"\w+", re.UNICODE)
@@ -69,7 +83,11 @@ STOPWORDS = frozenset(
     gab gibt hat habe haben hatte ich ihr im in ist ja kann kein keine man mehr mein mich mir mit
     nach nicht noch nur ob oder sein sich sie sind so soll steht um und uns unter vom von vor war
     was welche welcher welches wenn wer werden wie wir wird wo wurde zu zum zur über ueber zwischen
-    the of and to a is""".split()
+    the of and to a is
+    wann warum wieso weshalb womit wofür wozu wohin woher
+    nächste nächsten nächster nächstes letzte letzten letzter letztes
+    fasse fass zusammen erkläre erklär zeige zeig nenne nenn sage sag gib liste kurz bitte mal
+    kannst könntest kann können muss müssen sollen sollte gibt geht machen tun""".split()
 )
 
 SCHEMA = """
@@ -94,6 +112,14 @@ END;
 CREATE TRIGGER IF NOT EXISTS passages_delete AFTER DELETE ON passages BEGIN
     INSERT INTO passages_fts (passages_fts, rowid, title, text) VALUES ('delete', old.id, old.title, old.text);
 END;
+CREATE TABLE IF NOT EXISTS vectors (
+    passage_id INTEGER PRIMARY KEY,   -- geaenderte Eintraege bekommen eine neue id, ihr Vektor faellt weg
+    model      TEXT NOT NULL,         -- Embedding-Modell, mit dem er berechnet wurde
+    vector     BLOB NOT NULL          -- float32, auf Laenge 1 gebracht
+);
+CREATE TRIGGER IF NOT EXISTS vectors_delete AFTER DELETE ON passages BEGIN
+    DELETE FROM vectors WHERE passage_id = old.id;
+END;
 """
 
 
@@ -115,11 +141,50 @@ class Passage:
         return hashlib.sha256(joined.encode()).hexdigest()
 
 
+# Wodurch ein Treffer gefunden wurde.
+BY_KEY, BY_WORD, BY_MEANING, BY_BOTH = "Kürzel", "Wort", "Bedeutung", "Wort und Bedeutung"
+BY_PART = "Wortteil"
+# Ab so vielen Buchstaben wird ein Wort der Frage auch mitten in anderen Worten gesucht.
+MIN_PART = 5
+
+
 @dataclass(frozen=True)
 class Hit:
     passage: Passage
     score: float  # hoeher ist besser
     snippet: str  # Ausschnitt um die Fundstelle
+    found_by: str = BY_WORD
+    similarity: float | None = None  # Naehe zur Frage (0 bis 1), wenn die Bedeutungssuche lief
+
+
+# Texte -> je Text ein Vektor. Das Embedding-Modell laeuft lokal ueber Ollama.
+Embedder = Callable[[list[str]], list[list[float]]]
+
+
+class EmbeddingError(RuntimeError):
+    """Das Embedding-Modell ist nicht erreichbar oder antwortet nicht wie erwartet."""
+
+
+def ollama_embedder(model: str) -> Embedder:
+    """Embeddings vom lokalen Ollama; baut noch keine Verbindung auf."""
+    from local_agents.context_window import OllamaError, api
+
+    def embed(texts: list[str]) -> list[list[float]]:
+        try:
+            vectors = api("/api/embed", {"model": model, "input": texts}).get("embeddings")
+        except OllamaError as exc:
+            raise EmbeddingError(str(exc)) from exc
+        if not isinstance(vectors, list) or len(vectors) != len(texts):
+            raise EmbeddingError(f"{model} lieferte keine Embeddings.")
+        return vectors
+
+    return embed
+
+
+def _unit(vector: list[float]) -> np.ndarray:
+    array = np.asarray(vector, dtype=np.float32)
+    norm = float(np.linalg.norm(array))
+    return array / norm if norm else array
 
 
 @dataclass(frozen=True)
@@ -311,37 +376,149 @@ class Index:
             {row["kind"]: row["n"] for row in self.db.execute("SELECT kind, count(*) AS n FROM passages GROUP BY kind")}
         )
 
-    def search(self, question: str, limit: int = DEFAULT_LIMIT, kinds: tuple[str, ...] = ()) -> list[Hit]:
-        """Die besten Treffer zur Frage, die besten zuerst; leer, wenn nichts passt."""
+    # --- Bedeutungssuche
+
+    def vector_count(self) -> int:
+        return self.db.execute("SELECT count(*) FROM vectors").fetchone()[0]
+
+    def embed_missing(self, embedder: Embedder, model: str) -> int:
+        """Berechnet die Vektoren, die fuer ``model`` noch fehlen; gibt ihre Zahl zurueck."""
+        with self.db:
+            self.db.execute("DELETE FROM vectors WHERE model <> ?", (model,))
+        rows = self.db.execute(
+            "SELECT id, title, text FROM passages WHERE id NOT IN (SELECT passage_id FROM vectors) ORDER BY id"
+        ).fetchall()
+        for start in range(0, len(rows), EMBED_BATCH):
+            batch = rows[start : start + EMBED_BATCH]
+            vectors = embedder([f"{row['title']}\n{row['text']}" for row in batch])
+            with self.db:
+                self.db.executemany(
+                    "INSERT INTO vectors (passage_id, model, vector) VALUES (?, ?, ?)",
+                    [(row["id"], model, _unit(vector).tobytes()) for row, vector in zip(batch, vectors)],
+                )
+        return len(rows)
+
+    def _by_meaning(self, question: str, embedder: Embedder, kinds: tuple[str, ...]) -> list[tuple[sqlite3.Row, float]]:
+        """Eintraege nach Naehe zur Frage, die naechsten zuerst, ohne die unpassenden."""
+        kind_filter = f" WHERE p.kind IN ({', '.join('?' * len(kinds))})" if kinds else ""
+        rows = self.db.execute(
+            f"SELECT p.*, v.vector FROM vectors v JOIN passages p ON p.id = v.passage_id{kind_filter} ORDER BY p.id",
+            kinds,
+        ).fetchall()
+        if not rows:
+            return []
+        query = _unit(embedder([question])[0])
+        matrix = np.frombuffer(b"".join(row["vector"] for row in rows), dtype=np.float32).reshape(len(rows), -1)
+        if matrix.shape[1] != query.shape[0]:
+            raise EmbeddingError("Die gespeicherten Vektoren passen nicht zum Embedding-Modell.")
+        similarities = matrix @ query
+        order = np.argsort(-similarities, kind="stable")
+        return [
+            (rows[index], float(similarities[index]))
+            for index in order[:CANDIDATES]
+            if similarities[index] >= MIN_SIMILARITY
+        ]
+
+    def _by_part(self, question: str, kinds: tuple[str, ...]) -> list[sqlite3.Row]:
+        """Eintraege, in denen ein Wort der Frage mitten in einem anderen Wort steht; Titel zuerst."""
+        stems = [stem(word) for word in content_words(question)]
+        stems = [word for word in dict.fromkeys(stems) if len(word) >= MIN_PART and not word.isdigit()]
+        if not stems:
+            return []
+        patterns = ["%" + word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%" for word in stems]
+        in_title = " OR ".join("p.title LIKE ? ESCAPE '\\'" for _ in patterns)
+        in_text = " OR ".join("p.text LIKE ? ESCAPE '\\'" for _ in patterns)
+        kind_filter = f" AND p.kind IN ({', '.join('?' * len(kinds))})" if kinds else ""
+        rows = self.db.execute(
+            f"SELECT p.*, 0.0 AS score, ({in_title}) AS titled FROM passages p "
+            f"WHERE (({in_title}) OR ({in_text})){kind_filter} ORDER BY titled DESC, p.id LIMIT ?",
+            (*patterns, *patterns, *patterns, *kinds, CANDIDATES),
+        ).fetchall()
+        return [_with_snippet(row, stems) for row in rows]
+
+    # --- Suchen
+
+    def search(
+        self,
+        question: str,
+        limit: int = DEFAULT_LIMIT,
+        kinds: tuple[str, ...] = (),
+        embedder: Embedder | None = None,
+    ) -> list[Hit]:
+        """Die besten Treffer zur Frage, die besten zuerst; leer, wenn nichts passt.
+
+        Mit ``embedder`` kommt zur Wortsuche die Bedeutungssuche: Beide liefern
+        eine Rangliste, und ein Eintrag steht umso weiter vorn, je weiter vorn
+        er in beiden steht. Eine in der Frage genannte Story steht immer zuerst.
+        """
         keys = story_keys(question)
         query = fts_query(question)
-        hits: dict[str, Hit] = {}
         kind_filter = f" AND p.kind IN ({', '.join('?' * len(kinds))})" if kinds else ""
+        hits: dict[str, Hit] = {}
         if keys:
-            # Eine genannte Story steht vorn, auch wenn sonst kein Wort passt.
             rows = self.db.execute(
                 f"SELECT p.* FROM passages p WHERE p.key IN ({', '.join('?' * len(keys))}){kind_filter} "
                 "ORDER BY p.kind = 'story' DESC, p.id",
                 (*keys, *kinds),
             )
             for row in rows:
-                hits[row["ref"]] = Hit(_passage(row), float("inf"), _lead(row["text"]))
+                hits[row["ref"]] = Hit(_passage(row), float("inf"), _lead(row["text"]), BY_KEY)
+        words: list[sqlite3.Row] = []
         if query:
-            rows = self.db.execute(
+            words = self.db.execute(
                 "SELECT p.*, -bm25(passages_fts, ?, ?) AS score, "
                 "snippet(passages_fts, 1, '', '', ' … ', ?) AS snippet "
                 f"FROM passages_fts JOIN passages p ON p.id = passages_fts.rowid "
                 f"WHERE passages_fts MATCH ?{kind_filter} ORDER BY score DESC, p.id LIMIT ?",
-                (TITLE_WEIGHT, TEXT_WEIGHT, SNIPPET_TOKENS, query, *kinds, limit + len(hits)),
-            )
-            for row in rows:
-                if row["ref"] not in hits:
-                    hits[row["ref"]] = Hit(_passage(row), row["score"], " ".join(row["snippet"].split()))
+                (TITLE_WEIGHT, TEXT_WEIGHT, SNIPPET_TOKENS, query, *kinds, max(CANDIDATES, limit)),
+            ).fetchall()
+        parts: set[str] = set()
+        if query and not words:
+            # Kein Wort beginnt so: als Wortteil suchen ("Frist" in "Aufbewahrungsfrist").
+            words = self._by_part(question, kinds)
+            parts = {row["ref"] for row in words}
+        meaning = self._by_meaning(question, embedder, kinds) if embedder is not None else []
+        similarity = {row["ref"]: value for row, value in meaning}
+        scores: dict[str, float] = {}
+        found: dict[str, tuple[sqlite3.Row, str]] = {}
+        for rank, row in enumerate(words, start=1):
+            scores[row["ref"]] = 1 / (RRF_K + rank)
+            found[row["ref"]] = (row, " ".join(row["snippet"].split()))
+        for rank, (row, _) in enumerate(meaning, start=1):
+            scores[row["ref"]] = scores.get(row["ref"], 0.0) + MEANING_WEIGHT / (RRF_K + rank)
+            found.setdefault(row["ref"], (row, _lead(row["text"])))
+        word_refs = {row["ref"] for row in words}
+        for ref in sorted(scores, key=lambda ref: (-scores[ref], found[ref][0]["id"])):
+            if ref in hits:
+                continue
+            row, snippet = found[ref]
+            if ref in parts:
+                how = BY_PART
+            elif ref in word_refs:
+                how = BY_BOTH if ref in similarity else BY_WORD
+            else:
+                how = BY_MEANING
+            score = scores[ref] if embedder is not None or ref in parts else row["score"]
+            hits[ref] = Hit(_passage(row), score, snippet, how, similarity.get(ref))
         return list(hits.values())[:limit]
 
 
 def _passage(row: sqlite3.Row) -> Passage:
     return Passage(row["ref"], row["kind"], row["title"], row["text"], row["context"], row["source"], row["key"])
+
+
+class _Row(dict):
+    """Eine Zeile mit nachgetragenem Ausschnitt; laesst sich lesen wie ``sqlite3.Row``."""
+
+
+def _with_snippet(row: sqlite3.Row, stems: list[str]) -> _Row:
+    flat = " ".join(row["text"].split())
+    lower = flat.lower()
+    at = min((lower.find(word) for word in stems if word in lower), default=0)
+    start = max(0, at - 60)
+    piece = flat[start : start + 160]
+    snippet = ("… " if start else "") + piece + (" …" if start + 160 < len(flat) else "")
+    return _Row({**{key: row[key] for key in row.keys()}, "snippet": snippet})
 
 
 def _lead(text: str, chars: int = 160) -> str:
@@ -365,6 +542,17 @@ def stem(word: str) -> str:
     return word
 
 
+def content_words(question: str) -> list[str]:
+    """Die Worte der Frage ohne Fuellwoerter und ohne Story-Kuerzel, klein geschrieben."""
+    # Kuerzel sucht ``Index.search`` gezielt; ihre Teile ("qg", "1") wuerden nur stoeren.
+    # lower() statt casefold(): Das "ß" bleibt, wie es auch im Index steht.
+    return [
+        word
+        for word in WORD.findall(STORY_KEY.sub(" ", question).lower())
+        if word not in STOPWORDS and (len(word) >= 2 or word.isdigit())
+    ]
+
+
 def fts_query(question: str) -> str:
     """Die Frage als Volltext-Anfrage: Wortstaemme mit beliebiger Endung, mit ODER verbunden.
 
@@ -372,11 +560,7 @@ def fts_query(question: str) -> str:
     er (BM25). Leer, wenn die Frage nur aus Fuellwoertern besteht.
     """
     terms: list[str] = []
-    # Kuerzel sucht ``Index.search`` gezielt; ihre Teile ("qg", "1") wuerden nur stoeren.
-    # lower() statt casefold(): Das "ß" bleibt, wie es auch im Index steht.
-    for word in WORD.findall(STORY_KEY.sub(" ", question).lower()):
-        if word in STOPWORDS or (len(word) < 2 and not word.isdigit()):
-            continue
+    for word in content_words(question):
         term = f'"{word}"' if word.isdigit() else f'"{stem(word)}"*'
         if term not in terms:
             terms.append(term)
@@ -391,12 +575,35 @@ def refresh(index: Index, profile: Profile, store: Store) -> Changes:
     return index.update(collect(profile, store))
 
 
+def prepare_meaning(index: Index, profile: Profile, notes: list[str] | None = None) -> Embedder | None:
+    """Der Embedder aus dem Profil, nachdem fehlende Vektoren berechnet sind.
+
+    None, wenn die Bedeutungssuche abgeschaltet ist oder das Modell nicht
+    antwortet; dann gilt die Wortsuche, und ``notes`` nennt den Grund.
+    """
+    model = profile.search_embeddings
+    if not model:
+        return None
+    embedder = ollama_embedder(model)
+    try:
+        index.embed_missing(embedder, model)
+    except EmbeddingError as exc:
+        if notes is not None:
+            notes.append(f"Bedeutungssuche nicht verfügbar, nur Wortsuche: {exc}")
+        return None
+    return embedder
+
+
 def hit_lines(hits: list[Hit]) -> list[str]:
     lines = []
     for number, hit in enumerate(hits, start=1):
         passage = hit.passage
         where = " · ".join(part for part in (KIND_LABELS[passage.kind], passage.context, passage.source) if part)
         lines.append(f"{number}. {passage.title}")
+        if hit.similarity is not None:
+            where += f" · gefunden über {hit.found_by}, Nähe {hit.similarity:.2f}"
+        elif hit.found_by != BY_WORD:
+            where += f" · gefunden über {hit.found_by}"
         lines.append(f"   {where}")
         lines.append(f"   {hit.snippet}")
     return lines
@@ -436,11 +643,24 @@ def main(argv: list[str]) -> int:
     store, index = Store(), Index()
     try:
         changes = refresh(index, profile, store)
+        notes: list[str] = []
+        embedder = prepare_meaning(index, profile, notes)
+        if notes:
+            print("\n".join(notes), file=sys.stderr)
         if args[0] == "index":
             print(f"Abgeglichen: {changes.added} neu, {changes.changed} geändert, {changes.removed} entfernt.")
             print(count_line(index.counts()))
+            print(
+                f"Bedeutungssuche: {profile.search_embeddings}, {index.vector_count()} Einträge mit Vektor."
+                if embedder is not None
+                else "Bedeutungssuche: aus (Profil: embeddings unter [search])."
+            )
             return 0
-        hits = index.search(args[0], limit)
+        try:
+            hits = index.search(args[0], limit, embedder=embedder)
+        except EmbeddingError as exc:
+            print(f"Bedeutungssuche nicht verfügbar, nur Wortsuche: {exc}", file=sys.stderr)
+            hits = index.search(args[0], limit)
         if not hits:
             print("Keine Treffer. " + count_line(index.counts()))
             return 0

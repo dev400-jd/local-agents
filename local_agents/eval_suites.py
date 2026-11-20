@@ -676,11 +676,25 @@ class SucheInputs(Strict):
 
 class SucheOutput(BaseModel):
     titel: list[str]  # Titel der Treffer, der beste zuerst
-    modell: str = ""  # bleibt leer: Die Suche fragt kein Modell
+    modell: str = ""  # mit Bedeutungssuche: wodurch und mit welcher Naehe jeder Treffer gefunden wurde
 
 
 def suche_task(model: object) -> Callable[[SucheInputs], SucheOutput]:
-    """Die Aufgabe fuer pydantic-evals: Index aufbauen, suchen, Titel der Treffer zurueckgeben."""
+    """Die Aufgabe fuer pydantic-evals: Index aufbauen, suchen, Titel der Treffer zurueckgeben.
+
+    ``model`` ist None (nur Wortsuche) oder der Name eines Embedding-Modells;
+    dann laeuft die Bedeutungssuche mit.
+    """
+    embedder = None
+    if isinstance(model, str) and model:
+        ask = search.ollama_embedder(model)
+        known: dict[str, list[float]] = {}  # dieselben Dokumente in jedem Fall: nur einmal berechnen
+
+        def embedder(texts: list[str]) -> list[list[float]]:
+            missing = [text for text in dict.fromkeys(texts) if text not in known]
+            if missing:
+                known.update(zip(missing, ask(missing)))
+            return [known[text] for text in texts]
 
     def run(inputs: SucheInputs) -> SucheOutput:
         index = search.Index(":memory:")
@@ -696,8 +710,15 @@ def suche_task(model: object) -> Callable[[SucheInputs], SucheOutput]:
                 passages = search.collect(load_profile(), store)
             store.close()
             index.update(passages)
-            hits = index.search(inputs.frage, inputs.treffer)
-            return SucheOutput(titel=[hit.passage.title for hit in hits])
+            if embedder is not None:
+                index.embed_missing(embedder, str(model))
+            hits = index.search(inputs.frage, inputs.treffer, embedder=embedder)
+            said = "; ".join(
+                f"{hit.passage.title.split(' (')[0]} [{hit.found_by}"
+                + (f" {hit.similarity:.2f}]" if hit.similarity is not None else "]")
+                for hit in hits
+            )
+            return SucheOutput(titel=[hit.passage.title for hit in hits], modell=said if embedder else "")
         finally:
             index.close()
 
