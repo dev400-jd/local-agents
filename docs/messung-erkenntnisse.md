@@ -34,6 +34,7 @@ Bestandene Läufe von allen Läufen; je Fall fünf Läufe, bei der Terminart zwe
 | Status-Agent | 9 | 45 von 45, 1 bis 2 s | 45 von 45, 8 bis 14 s |
 | Terminart | 13 | 24 von 26, 3 bis 18 s | Abbruch nach 10 bestandenen Läufen (rund 50 s je Lauf): Speichermangel |
 | Story-Erkennung | 5 | 19 von 25, unter 1 s | 25 von 25, 8 bis 21 s |
+| Gesprächs-Agent | 12 | 47, nach Korrekturen 60 von 60, 1 bis 2 s | nicht gemessen |
 | Nachrichten-Agent | 10 | 49 von 50, 2 bis 4 s | 42 von 45, 24 bis 70 s (9 Fälle, vor der Lockerung) |
 
 Die Zahlen gelten nach den Korrekturen aus dem nächsten Abschnitt. Beim
@@ -54,6 +55,17 @@ bei `gpt-oss:20b` stammen aus mehreren Messläufen desselben Stands.
 | Rückmeldung | Auf eine unklare Antwort („das mit dem Dings passt mir nicht") nahm der Agent eine Aufgabe heraus, statt nachzufragen. | Eine Aufgabe fliegt nur raus, wenn die Antwort sie erkennbar nennt (Nummer, Tag, Wort aus dem Titel); sonst Rückfrage. | 0 von 3 → 5 von 5 |
 | Status-Agent | Qwen rechnete die Zeit bis zum Termin selbst um und lag daneben („knapp 24 Stunden" bei 25). | Der Auftrag verlangt, Zeitangaben wörtlich zu übernehmen. | 39 von 45 → 45 von 45 |
 | Status-Agent | Aus „Plan noch nicht abgesegnet" leitete Qwen Behauptungen ab („erst nach Freigabe"). | Der Stand der Freigabe steht nur noch in der Überschrift für den Nutzer, nicht mehr im Auftrag. | in den Mitschnitten nicht mehr aufgetreten; kein Prüfer dafür |
+
+Dazu am 20.11. beim Gesprächs-Agenten (erster Messlauf 47 von 60, danach 60
+von 60):
+
+| Befund | Korrektur |
+|---|---|
+| Der Code löste „nach QG-3" richtig zu QG-4 auf, sagte es dem Modell aber nicht; das Modell meldete, zu QG-3 stehe nichts da. | Der Auftrag nennt die gemeinte Story. |
+| Bei „als Letztes" beschrieb die Antwort die Story, ohne ihr Kürzel zu nennen. | Die Selbstprüfung verlangt das Kürzel, wenn der Code die Story über ihre Stelle bestimmt hat. |
+| „30 Tage" stand in der Antwort und galt doch als fehlend: geschütztes Leerzeichen zwischen Zahl und Einheit. | Der Agent ersetzt solche Leerzeichen. |
+
+Den ersten Befund hatte ein Probelauf von Hand mit fünf Fragen nicht gezeigt.
 
 Weiter bestehende Schwächen, alle mit `gpt-oss:20b`:
 

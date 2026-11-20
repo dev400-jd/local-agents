@@ -976,7 +976,10 @@ Je Frage läuft dasselbe Muster wie beim Nachrichten-Agenten:
    rund 9000 Zeichen), die Gliederung und die letzten zwei Wortwechsel, und
    antwortet in der verlangten Form.
 3. **Prüfen (Code):** Jedes Story-Kürzel und jede Zahl der Antwort muss in dem
-   stehen, was das Modell gesehen hat. Sonst geht die Antwort zurück ans
+   stehen, was das Modell gesehen hat. Hat der Code die Story über ihre Stelle
+   bestimmt („als Letztes", „nach QG-3"), muss die Antwort ihr Kürzel nennen,
+   denn du kennst es noch nicht; das Modell erfährt dazu, welche Story gemeint
+   ist. Sonst geht die Antwort zurück ans
    Modell (bis zu dreimal); gelingt es nicht, zeigt der Agent die Fundstellen
    statt einer Antwort.
 

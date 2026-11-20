@@ -79,7 +79,7 @@ cases:
     ordner: *vault
     bemerkungen: *bemerkungen
   evaluators:
-  - Antwort: {zuerst: "QG-2", eines_von: ["nicht", "keine", "kein "], nennt_nicht: ["2026", "2027", "Dezember", "Januar"]}
+  - Antwort: {zuerst: "QG-2", eines_von: ["nicht", "keine", "kein ", "weder"], nennt_nicht: ["2026", "2027", "Dezember", "Januar"]}
 - name: "Umschriebene Frage ohne Kürzel"
   inputs:
     frage: "Wie kommen kleine Lieferanten mit ihren Lieferscheinen ins System?"

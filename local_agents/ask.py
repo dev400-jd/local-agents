@@ -84,6 +84,9 @@ class Selection:
     outline: tuple[str, ...] = ()  # Stories des Features in der Reihenfolge der Datei
     how: str = ""  # in Worten, wie ausgewaehlt wurde
     focus: str = ""  # Gruppe der Story, bei der eine Anschlussfrage bleibt
+    # Kuerzel der Story, die der Code ueber ihre Stelle bestimmt hat ("als Letztes",
+    # "nach QG-3"). Der Nutzer kennt sie nicht, also muss die Antwort sie nennen.
+    resolved: str = ""
 
     def titles(self) -> list[str]:
         """Titel der Eintraege ohne den Zusatz zu Teilen, jeder einmal."""
@@ -203,6 +206,7 @@ def select(index: Index, question: str, embedder: Embedder | None = None, focus:
                     _outline(stories),
                     f"{anchor.upper()} ist die {FIRST if position == PREVIOUS else LAST} Story im Feature „{feature}“",
                     stories[at].group or stories[at].ref,
+                    stories[at].key,
                 )
         if chosen is not None:
             return Selection(
@@ -211,6 +215,7 @@ def select(index: Index, question: str, embedder: Embedder | None = None, focus:
                 _outline(stories),
                 f"{position} Story im Feature „{feature}“" + (f" (bezogen auf {anchor.upper()})" if anchor else ""),
                 chosen.group or chosen.ref,
+                chosen.key,
             )
 
     # 2. Genannte Stories.
@@ -344,6 +349,14 @@ def instructions(ctx: RunContext[AskDeps]) -> str:
     outline = outline_text(deps.selection)
     if outline:
         text += f"\n{outline}\n"
+    if deps.selection.resolved:
+        # Sonst sucht das Modell in den Eintraegen nach der Story, die die Frage nennt
+        # ("nach QG-3"), findet nur die ausgewaehlte und meldet, es stehe nichts da.
+        text += (
+            f"\nDie Frage meint eine Story über ihre Stelle im Feature. Schon bestimmt: "
+            f"{deps.selection.how} ist {deps.selection.resolved.upper()}. Beantworte die Frage für "
+            f"{deps.selection.resolved.upper()} und nenne dieses Kürzel in der Antwort.\n"
+        )
     text += f"\nEinträge:\n{entries_text(deps.selection) or '(keine)'}\n"
     history = history_text(deps.history)
     if history:
@@ -368,6 +381,9 @@ def problems(answer: str, deps: AskDeps) -> list[str]:
     ]
     if unknown:
         found.append(f"Story-Kürzel, die nicht in den Einträgen stehen: {', '.join(unknown)}")
+    resolved = deps.selection.resolved
+    if resolved and resolved not in answer.casefold():
+        found.append(f"die Antwort nennt die gemeinte Story nicht: {resolved.upper()} mit Kürzel nennen")
     invented = invented_numbers(LIST_MARKER.sub("", answer), seen)
     if invented:
         found.append(f"Zahlen, die nicht in den Einträgen stehen: {', '.join(invented)}")
@@ -379,6 +395,8 @@ def checked(ctx: RunContext[AskDeps], answer: str) -> str:
     # Geschuetzte Bindestriche (U+2010, U+2011) schreibt das Modell gern in Kuerzel; dann
     # liessen sie sich weder pruefen noch kopieren.
     answer = answer.replace("\u2010", "-").replace("\u2011", "-")
+    # Ebenso geschuetzte und schmale Leerzeichen, etwa zwischen Zahl und Einheit ("30 Tage").
+    answer = re.sub("[\u00a0\u2007\u2009\u202f]", " ", answer)
     answer = "\n".join(line.rstrip() for line in answer.strip().splitlines())
     found = problems(answer, ctx.deps)
     if found:

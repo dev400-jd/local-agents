@@ -186,9 +186,26 @@ class TestConversation(AskCase):
         self.assertEqual((answer.text, answer.source), (ask.NOTHING_FOUND, ask.CODE))
         self.assertEqual(ask.answer_lines(answer), ask.NOTHING_FOUND)
 
-    def test_protected_hyphens_in_keys_are_normalised(self) -> None:
-        talk = ask.Conversation(self.index, saying("QG‑3 hält Datensätze vor."))
-        self.assertEqual(talk.ask("Was ist mit QG-3?").text, "QG-3 hält Datensätze vor.")
+    def test_protected_hyphens_and_spaces_are_normalised(self) -> None:
+        talk = ask.Conversation(self.index, saying("QG\u20113 hält Datensätze 30\u202fTage vor."))
+        self.assertEqual(talk.ask("Was ist mit QG-3?").text, "QG-3 hält Datensätze 30 Tage vor.")
+
+    def test_story_found_by_its_place_must_be_named(self) -> None:
+        seen: list = []
+        talk = ask.Conversation(
+            self.index,
+            saying("Die Einträge enthalten keine Information zu QG-3.", "Danach kommt QG-4 mit Schwellenwerten.", seen=seen),
+        )
+        answer = talk.ask("Was kommt nach QG-3 und worum geht es dort?")
+        self.assertEqual((answer.text, answer.selection.resolved), ("Danach kommt QG-4 mit Schwellenwerten.", "qg-4"))
+        self.assertIn(
+            f"Schon bestimmt: nächste Story im Feature „{QUALITY}“ (bezogen auf QG-3) ist QG-4. "
+            "Beantworte die Frage für QG-4 und nenne dieses Kürzel in der Antwort.",
+            seen[0],
+        )
+        # Bei einer genannten Story oder einer Anschlussfrage gilt die Pflicht nicht.
+        self.assertEqual(self.select("Was ist mit QG-3?").resolved, "")
+        self.assertEqual(self.select("und der Aufwand?", self.select("Was ist mit QG-3?").focus).resolved, "")
 
     def test_chat_commands(self) -> None:
         talk = ask.Conversation(self.index, saying("QG-3 hält Datensätze vor."))
