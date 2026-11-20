@@ -8,6 +8,8 @@ Aufruf:
 Durchsucht werden:
 - die Story-Dateien der Kontexte mit ``stories_dir`` (je Story und je sonstigem
   Abschnitt ein Eintrag),
+- die uebrigen Markdown-Dateien in diesen Ordnern, etwa Protokolle und Recaps
+  (je Ueberschriften-Abschnitt ein Eintrag der Art "Dokument"),
 - deine Bemerkungen aus dem Scrum Master (ohne die entfernten),
 - die Einordnungen des Termin-Agenten,
 - uebernommene Nachrichten des Nachrichten-Agenten,
@@ -52,6 +54,7 @@ from local_agents.store import DONE, NOTE_REMOVED, Store, db_path
 AGENT_NAME = "suche"
 STORY, SECTION, REMARK, BRIEF, MESSAGE = "story", "abschnitt", "bemerkung", "einordnung", "nachricht"
 ASANA = "asana"
+DOCUMENT = "dokument"  # Abschnitt einer Markdown-Datei ohne Stories (Protokoll, Recap, Notizen)
 KIND_LABELS = {
     STORY: "Story",
     SECTION: "Abschnitt",
@@ -59,6 +62,7 @@ KIND_LABELS = {
     BRIEF: "Einordnung",
     MESSAGE: "Nachricht",
     ASANA: "Asana-Aufgabe",
+    DOCUMENT: "Dokument",
 }
 DEFAULT_LIMIT = 5
 # Laengere Eintraege werden an Absaetzen geteilt, damit ein Treffer in den
@@ -266,7 +270,8 @@ def story_passages(label: str, folder: Path) -> list[Passage]:
     found: list[Passage] = []
     if not folder.expanduser().is_dir():
         return found
-    for feature in stories.load_features(folder):  # ohne Modell: Regel und vorhandener Index
+    features = stories.load_features(folder)  # ohne Modell: Regel und vorhandener Index
+    for feature in features:
         try:
             name = str(feature.path.relative_to(folder.expanduser()))
         except ValueError:
@@ -288,6 +293,47 @@ def story_passages(label: str, folder: Path) -> list[Passage]:
                 key=story.key.casefold(),
                 position=position,
                 **extra,
+            )
+    return found + document_passages(label, folder, {feature.path for feature in features})
+
+
+def document_passages(label: str, folder: Path, features: set[Path]) -> list[Passage]:
+    """Markdown-Dateien ohne Stories (Protokoll, Recap, Notizen): je Ueberschriften-Abschnitt ein Eintrag.
+
+    ``features`` sind die Dateien, die schon als Feature gelesen wurden. Der
+    Titel des Dokuments ist seine erste Ueberschrift, sonst der Dateiname; er
+    steht bei jedem Eintrag als ``feature``, damit sich die Abschnitte eines
+    Dokuments zusammen holen lassen. ``position`` zaehlt sie in der Reihenfolge
+    der Datei.
+    """
+    found: list[Passage] = []
+    folder = folder.expanduser()
+    for path in sorted(folder.rglob("*.md")):
+        if path in features:
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if stories.parse_feature(text, path).stories:
+            continue  # aeltere Fassung eines Features; die neuere steht schon im Index
+        intro, sections = stories.outline(text)
+        name = str(path.relative_to(folder))
+        title = next((section.heading for section in sections if section.level == 1), "") or path.stem
+        extra = {"context": label, "source": name, "feature": title}
+        position = 0
+        lead = "\n".join(intro).strip()
+        if lead:
+            position += 1
+            found += _pieces(f"{DOCUMENT}:{name}#", DOCUMENT, title, lead, position=position, **extra)
+        seen: dict[str, int] = {}
+        for section in sections:
+            body = "\n".join(section.lines).strip()
+            if not body:
+                continue
+            position += 1
+            seen[section.heading] = seen.get(section.heading, 0) + 1
+            suffix = f"~{seen[section.heading]}" if seen[section.heading] > 1 else ""  # gleiche Ueberschrift zweimal
+            heading = title if section.heading == title else f"{title}: {section.heading}"
+            found += _pieces(
+                f"{DOCUMENT}:{name}#{section.heading}{suffix}", DOCUMENT, heading, body, position=position, **extra
             )
     return found
 
@@ -494,9 +540,27 @@ class Index:
     # --- Aufbau: Features und ihre Stories
 
     def features(self) -> list[str]:
-        """Titel aller Features im Index."""
-        rows = self.db.execute("SELECT DISTINCT feature FROM passages WHERE feature <> '' ORDER BY feature")
+        """Titel aller Features im Index (Dateien mit Stories)."""
+        rows = self.db.execute(
+            "SELECT DISTINCT feature FROM passages WHERE feature <> '' AND kind IN (?, ?) ORDER BY feature",
+            (STORY, SECTION),
+        )
         return [row["feature"] for row in rows]
+
+    def documents(self) -> list[str]:
+        """Titel aller Dokumente im Index (Dateien ohne Stories)."""
+        rows = self.db.execute(
+            "SELECT DISTINCT feature FROM passages WHERE feature <> '' AND kind = ? ORDER BY feature", (DOCUMENT,)
+        )
+        return [row["feature"] for row in rows]
+
+    def document(self, title: str) -> list[Passage]:
+        """Alle Abschnitte eines Dokuments in der Reihenfolge der Datei."""
+        rows = self.db.execute(
+            "SELECT * FROM passages WHERE feature = ? AND kind = ? ORDER BY position, length(ref), ref",
+            (title, DOCUMENT),
+        )
+        return [_passage(row) for row in rows]
 
     def stories_of(self, feature: str) -> list[Passage]:
         """Die Stories eines Features in der Reihenfolge der Datei, je Story ihr erster Teil."""
@@ -787,6 +851,7 @@ KIND_PLURALS = {
     BRIEF: "Einordnungen",
     MESSAGE: "Nachrichten",
     ASANA: "Asana-Aufgaben",
+    DOCUMENT: "Dokument-Abschnitte",
 }
 
 

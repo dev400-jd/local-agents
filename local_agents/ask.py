@@ -185,7 +185,8 @@ def _outline(stories: list[Passage]) -> tuple[str, ...]:
 def select(index: Index, question: str, embedder: Embedder | None = None, focus: str = "") -> Selection:
     """Waehlt die Eintraege zur Frage aus. ``focus`` ist die Story der vorigen Antwort."""
     features = index.features()
-    feature = named_feature(question, features)
+    # Auch ein Dokument (Protokoll, Recap) kann genannt sein; dann sucht die Frage dort zuerst.
+    feature = named_feature(question, features + index.documents())
     keys = search.story_keys(question)
     position, anchor = position_asked(question)
     focused = index.parts(focus) if focus else []

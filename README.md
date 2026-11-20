@@ -860,6 +860,7 @@ Durchsucht werden:
 | Quelle | Ein Eintrag je |
 |---|---|
 | Story-Dateien der Kontexte mit `stories_dir` | Story und sonstigem Abschnitt (Ziel, Architektur …) |
+| Übrige Markdown-Dateien in diesen Ordnern (Protokolle, Recaps, Notizen) | Überschriften-Abschnitt, als „Dokument" |
 | Bemerkungen aus dem Scrum Master | Bemerkung, ohne die entfernten |
 | Einordnungen des Termin-Agenten | Termin |
 | Nachrichten-Agent | übernommener Nachricht |
@@ -1128,6 +1129,7 @@ Arbeitgebers erlaubt ist, musst du selbst klären.
 | Umbenennen | „Benenne … in … um" |
 | Unteraufgabe anlegen, dir zugewiesen | „Füge bei … die Unteraufgabe … hinzu" |
 | Abschnitt im Projekt anlegen | „Leg den Abschnitt … an" |
+| Beschreibung aus einem Dokument des Vaults schreiben | „Schreib die Beschreibung für … aus dem Workshop-Recap" |
 
 Statt des Namens geht auch ein Verweis auf die Aufgabe der letzten Aktion:
 „den eben angelegten Task", „die Aufgabe von gerade", „die letzte Aufgabe".
@@ -1135,6 +1137,9 @@ Statt des Namens geht auch ein Verweis auf die Aufgabe der letzten Aktion:
 In der Shell gehört der Satz in Anführungszeichen. Enthält er selbst welche,
 außen einfache nehmen (`'… in den Abschnitt "In Arbeit"'`); sonst wartet zsh
 mit `dquote>` auf das Ende des Textes (`Strg+C` bricht ab).
+
+Die Beschreibung kannst du vorerst nur annehmen oder ablehnen; einen
+Änderungswunsch wie beim Nachrichten-Agenten gibt es noch nicht.
 
 Was es nicht gibt: Kommentare, Zuweisungen an andere, Löschen, mehrere
 Aktionen in einem Satz, „alle Aufgaben …", Änderungen an Unteraufgaben, an
@@ -1163,6 +1168,69 @@ der Agent mit der Liste dessen, was geht.
    Freigabe. Bei einer angelegten Aufgabe heißt Zurücknehmen: Sie wird
    gelöscht; das ist das einzige Löschen, das es gibt, und es geht nur für
    Aufgaben, die der Agent selbst angelegt hat.
+
+### Beschreibung aus einem Dokument
+
+```bash
+.venv/bin/python -m local_agents.asana_actions "Schreib die Beschreibung für den Brainstorming-Task aus dem Workshop-Recap"
+```
+
+```text
+Beschreibung setzen im Projekt „Übungsprojekt“: Einstieg für Anfänger brainstormen
+  Beschreibung: leer → 869 Zeichen aus „Recap Workshop Onboarding neuer Kollegen“
+  Quelle: Dokument „Recap Workshop Onboarding neuer Kollegen“ (recap-workshop-onboarding.md)
+
+Neue Beschreibung:
+Worum es geht:
+…
+
+Ausführen? (j/n)
+```
+
+Dokumente sind die Markdown-Dateien ohne Stories im Ordner aus `stories_dir`,
+etwa ein Protokoll oder ein Recap. Der Ablauf (`asana_describe.py`):
+
+1. **Dokument finden (Code):** Nennst du eines („aus dem Workshop-Recap"), gilt
+   das Dokument mit diesen Worten im Titel. Sonst gewinnt das Dokument, das
+   die meisten Worte aus dem Titel der Aufgabe enthält. Liegen mehrere
+   gleichauf oder passt keines, nennt der Agent die Dokumente und ändert
+   nichts.
+2. **Material wählen (Code):** Mit einem Modell ab 16K Kontext bekommt das
+   Modell bis zu 24 000 Zeichen, sonst 9000. Ist das Dokument länger, nimmt
+   der Code den Anfang und die Abschnitte, die am besten zur Aufgabe passen;
+   der Plan sagt dann „12 von 25 Abschnitten berücksichtigt".
+3. **Entwurf (Modell):** eine Beschreibung nur aus diesem Material, als reiner
+   Text mit den Teilen „Worum es geht", „Ergebnisse", „Offene Punkte",
+   „Nächste Schritte", soweit das Dokument etwas dazu hergibt.
+4. **Selbstprüfung (Code):** Jede Zahl und jedes Story-Kürzel des Entwurfs muss
+   im Material stehen; kein Platzhalter, kein Markdown, 120 bis 2500 Zeichen.
+   Sonst geht er zurück ans Modell (bis zu dreimal); gelingt es nicht, gibt es
+   keinen Entwurf und keine Änderung.
+5. **Plan, Freigabe, Kontrolle, Protokoll** wie bei den anderen Aktionen. Der
+   Plan zeigt die ganze neue Beschreibung und, wenn es eine gab, die bisherige,
+   die ersetzt wird. `rueckgaengig` stellt die bisherige wieder her.
+
+Hier liest zum ersten Mal ein Modell fremden Text, dessen Ergebnis nach Asana
+geht. Deshalb gilt:
+
+- **Das Dokument ist Material, kein Auftrag.** Das Modell, das den Entwurf
+  schreibt, liefert nur Text. Welche Aufgabe und welches Feld geändert werden,
+  hat der Code vorher aus deinem Satz bestimmt. Eine Anweisung im Dokument
+  kann höchstens den Wortlaut beeinflussen, und den siehst du vor der
+  Freigabe. Ein Messfall mit einer eingeschleusten Anweisung prüft das.
+- **Auszüge aus dem Dokument landen in Asana,** also in einem System, das
+  andere sehen können. Im Übungsprojekt ist das unkritisch; sonst entscheidest
+  du es mit der Freigabe.
+- **Geprüft werden Zahlen, Kürzel und Form, nicht der Sinn.** Ob die
+  Beschreibung das Dokument richtig wiedergibt, siehst nur du. Als Lesehilfe
+  nennt der Plan Hauptworte des Entwurfs, die im Dokument nirgends vorkommen
+  („Nicht im Dokument, bitte prüfen: …"). Gemessen hat das Modell aus einem
+  dünnen Dokument einmal einen nächsten Schritt mit einer E-Mail gemacht, von
+  der dort nichts stand. Die Liste ist ein Hinweis, keine Sperre: Sie übersieht
+  Dazugedichtetes aus bekannten Worten und meldet auch harmlose
+  Umformulierungen.
+
+Anderes Modell für den Entwurf: `asana_beschreibung = "…"` unter `[models]`.
 
 Nach einer ausgeführten Aktion wird der [Asana-Spiegel](#asana-spiegel)
 abgeglichen, damit Suche und Abfragen die Änderung kennen.

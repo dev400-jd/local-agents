@@ -109,3 +109,7 @@ cases:
   inputs: {satz: "Leg die Aufgabe Angebot prüfen und versenden an", heute: *heute, aufgaben: *aufgaben}
   evaluators:
   - Aktion: {aktion: anlegen, aufgabe: "Angebot prüfen und versenden"}
+- name: "Beschreibung aus einem Dokument ist eine eigene Aktion"
+  inputs: {satz: "Schreib die Beschreibung für Folien bauen aus dem Workshop-Recap", heute: *heute, aufgaben: *aufgaben}
+  evaluators:
+  - Aktion: {rueckfrage: "Für eine Beschreibung brauche ich den Suchindex"}

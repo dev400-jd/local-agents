@@ -10,7 +10,7 @@ beschrieben ist, zieht die betroffene Zeile nach und setzt das Datum oben neu.
 
 ## Bestand
 
-Achtzehn Agenten und Bausteine lesen Kalender, Asana und Story-Dateien, machen
+Neunzehn Agenten und Bausteine lesen Kalender, Asana und Story-Dateien, machen
 daraus Aufgaben und Notizen und sprechen mit dem Nutzer. Einer davon erledigt
 selbst eine Aufgabe: Der Nachrichten-Agent schreibt den Entwurf zu einer
 Verschiebe-Aufgabe.
@@ -32,6 +32,7 @@ Verschiebe-Aufgabe.
 | Asana-Spiegel | `asana_mirror.py` | Hält einen lokalen, nur lesenden Abzug der eigenen und der gefolgten Asana-Aufgaben mit Kommentaren; Suche und Gesprächs-Agent lesen ihn mit | Im Hintergrund nur mit laufender Kalenderwache, dort nicht am echten Konto erprobt. Keine ganzen Projekte, Anhänge, Statusberichte. |
 | Asana-Aufgaben abfragen | `asana_tasks.py` | Beantwortet Listenfragen aus dem Spiegel (fällig, überfällig, geändert, bei anderen, je Projekt oder Person): Das Modell macht aus der Frage einen Filter, der Code rechnet Zeitangaben, filtert und schreibt die Liste | Ein Filter, keine Auswertung über Projekte hinweg. 14 erfundene Messfälle (69 von 70 Läufen mit `gpt-oss:20b`), keine echten. |
 | Asana steuern | `asana_actions.py` | Führt je Satz eine Aktion in einem freigegebenen Projekt aus (anlegen, abschließen, Fälligkeit, Abschnitt, umbenennen, Unteraufgabe): Plan mit alt → neu, Freigabe, Grenzkontrolle vor jeder Anfrage, Kontrolle danach, Protokoll und Zurücknehmen | Genau ein Projekt. Keine Kommentare, Zuweisungen, Massenänderungen. Am echten Asana erprobt: anlegen, Abschnitt anlegen, Fälligkeit mit Uhrzeit. 24 erfundene Messfälle (119 von 120 Läufen mit `gpt-oss:20b`). |
+| Beschreibung aus Dokument | `asana_describe.py` | Sucht zu einer Asana-Aufgabe das passende Dokument im Vault (Protokoll, Recap), lässt daraus eine Beschreibung entwerfen, prüft Zahlen, Kürzel und Form und legt sie über den Asana-Agenten zur Freigabe vor | Nur annehmen oder ablehnen, kein Änderungswunsch. Geprüft wird nicht der Sinn. Dichtet bei dünnen Dokumenten gelegentlich Schritte dazu; der Plan nennt deshalb Hauptworte, die im Dokument fehlen. 8 erfundene Messfälle (39 von 40 Läufen mit `gpt-oss:20b`), am echten Asana nicht erprobt. |
 | Suche | `search.py` | Findet nach Worten und, mit Embedding-Modell, nach Bedeutung die passenden Stories, Abschnitte, Bemerkungen, Einordnungen und Nachrichten zu einer Frage; gleicht den Index bei jedem Aufruf ab | Bedeutungssuche nur mit Embedding-Modell im Profil, ihre Schwelle ist an erfundenen Fragen eingestellt. Fragen nach dem Aufbau („was kommt zuletzt?") beantwortet sie nicht. Der Kalender fehlt. 21 erfundene Messfälle, keine echten. |
 | Kontextfenster | `context_window.py` | Zeigt je Modell, ob das Kontextfenster feststeht, und legt eine Variante mit 16K an | Die Variante muss von Hand ins Profil. Für das große Modell nicht erprobt. Kein Agent warnt, wenn ein Auftrag das Fenster sprengt. |
 | Profil und Datenbank | `profile.py`, `store.py` | Gemeinsames Gedächtnis: Kontexte, Rolle, Stresslevel, Aufgaben, Notizen, Laufprotokoll | Kein Gedächtnis über Gespräche, keine gelernten Vorlieben. |

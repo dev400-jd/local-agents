@@ -28,6 +28,10 @@ Der Ablauf je Satz:
 5. Protokoll: Jede Aenderung steht mit dem vorherigen Wert in der
    Agenten-Datenbank; ``rueckgaengig`` nimmt die letzte zurueck.
 
+Dazu "Beschreibung setzen": Der Agent sucht im Vault das passende Dokument
+(Protokoll, Recap) und laesst daraus eine Beschreibung fuer die Aufgabe
+entwerfen (asana_describe.py). Du siehst den ganzen Text vor der Freigabe.
+
 Was es nicht gibt: Kommentare, Zuweisungen an andere, Loeschen (ausser beim
 Zuruecknehmen einer eben angelegten Aufgabe), Aenderungen ausserhalb der
 erlaubten Projekte, mehrere Aktionen in einem Satz.
@@ -40,6 +44,7 @@ import sys
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from datetime import time as clock_time
@@ -49,8 +54,9 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-from local_agents import asana_mirror
-from local_agents.agent import MODEL_SETTINGS, ollama_model, structured
+from local_agents import asana_describe, asana_mirror
+from local_agents.agent import MODEL_NAME, MODEL_SETTINGS, ollama_model, structured
+from local_agents.asana_describe import Drafter, NoDescription
 from local_agents.asana_source import API_URL, AsanaAccessError, Transport, _explain, asana_token, http_transport
 from local_agents.asana_tasks import _day, _one_day
 from local_agents.asana_tasks import _words as _all_words
@@ -59,6 +65,7 @@ from local_agents.store import db_path
 
 AGENT_NAME = "asana_aktion"
 NEW_SECTION = "abschnitt_anlegen"
+DESCRIBE = "beschreibung"
 CREATE, COMPLETE, REOPEN, DUE, SECTION, RENAME, SUBTASK, UNCLEAR = (
     "anlegen",
     "abschliessen",
@@ -78,12 +85,13 @@ LABELS = {
     RENAME: "Aufgabe umbenennen",
     SUBTASK: "Unteraufgabe anlegen",
     NEW_SECTION: "Abschnitt anlegen",
+    DESCRIBE: "Beschreibung setzen",
 }
 # Eine Zeitangabe am Ende eines Titels ("Folien bauen bis Freitag"): Sie gehoert zur Faelligkeit.
 _DAY = r"(?:heute|morgen|übermorgen|montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag|\d{1,2}\.\s?\d{1,2}\.(?:\d{4})?)"
 TRAILING_DATE = re.compile(rf"\s+(?:bis|am|für|zum|auf)\s+(?:zum\s+|den\s+|nächsten\s+|kommenden\s+)?({_DAY})$", re.IGNORECASE)
 NO_DATE_WORDS = re.compile(r"\b(keine?|ohne|entfern\w*|lösch\w*|streich\w*|weg)\b")
-TASK_FIELDS = "name,completed,due_on,due_at,memberships.project.gid,memberships.section.gid,memberships.section.name,parent.gid"
+TASK_FIELDS = "name,notes,completed,due_on,due_at,memberships.project.gid,memberships.section.gid,memberships.section.name,parent.gid"
 MAX_TITLE_CHARS = 200
 MAX_CANDIDATES = 8
 
@@ -125,6 +133,7 @@ class Wish(BaseModel):
         "umbenennen",
         "unteraufgabe",
         "abschnitt_anlegen",
+        "beschreibung",
         "unklar",
     ] = Field(description="Die eine Aktion. „unklar“, wenn der Satz keine dieser Aktionen verlangt oder mehrere.")
     aufgabe: str = Field(
@@ -137,6 +146,11 @@ class Wish(BaseModel):
         "Leer, wenn der Satz keine nennt. Nur wenn der Nutzer den Termin ausdrücklich entfernen will: „keine“.",
     )
     abschnitt: str = Field("", description="Name des Abschnitts, wenn der Satz einen nennt.")
+    quelle: str = Field(
+        "",
+        description="Nur bei beschreibung: die Worte, mit denen der Nutzer das Dokument benennt, aus dem "
+        "die Beschreibung entstehen soll (etwa „Workshop-Recap“). Leer, wenn er keines nennt.",
+    )
 
 
 @dataclass
@@ -161,6 +175,10 @@ def instructions(ctx: RunContext[WishDeps]) -> str:
         "„pack … in …“, „tu … in …“, „sortiere … unter … ein“).\n"
         "- abschnitt_anlegen: einen neuen Abschnitt im Projekt anlegen („leg den Abschnitt … an“, „neuer "
         "Abschnitt …“). abschnitt ist sein Name; aufgabe und titel bleiben leer.\n"
+        "- beschreibung: die Beschreibung einer vorhandenen Aufgabe aus einem Dokument schreiben lassen "
+        "(„schreib die Beschreibung für … aus dem Recap“, „beschreibe … anhand des Protokolls“, „fülle die "
+        "Beschreibung von … aus“). aufgabe ist die Aufgabe, quelle das genannte Dokument. Du schreibst die "
+        "Beschreibung nicht selbst; titel bleibt leer. Ein Kommentar ist keine Beschreibung.\n"
         "- umbenennen: titel ist der neue Name, aufgabe der bisherige.\n"
         "- unteraufgabe: aufgabe ist die übergeordnete Aufgabe, titel die neue Unteraufgabe.\n"
         "- Nennt der Satz die Aufgabe nicht beim Namen, sondern verweist auf sie („den eben angelegten Task“, "
@@ -189,6 +207,7 @@ class LiveTask:
     name: str
     completed: bool = False
     due: str = ""  # ISO-Datum oder -Zeitpunkt
+    notes: str = ""  # Beschreibung
     section_gid: str = ""
     section: str = ""
     parent: str = ""  # gid der uebergeordneten Aufgabe
@@ -215,6 +234,7 @@ def _live(task: dict, project: str) -> LiveTask:
         task.get("name") or "",
         bool(task.get("completed")),
         task.get("due_at") or task.get("due_on") or "",
+        task.get("notes") or "",
         section.get("gid") or "",
         section.get("name") or "",
         (task.get("parent") or {}).get("gid") or "",
@@ -271,11 +291,12 @@ class Plan:
     undo: tuple[Request, ...]  # leer: Die Rueckrichtung ergibt sich erst aus der Antwort (neue Aufgabe)
     task_gid: str = ""  # betroffene vorhandene Aufgabe
     expect: tuple[tuple[str, object], ...] = ()  # Felder, die nach der Ausfuehrung so stehen muessen
+    detail: tuple[str, ...] = ()  # weitere Zeilen fuer die Freigabe, etwa der Text einer neuen Beschreibung
 
     def lines(self, project: str) -> list[str]:
         lines = [f"{LABELS[self.action]} im Projekt „{project}“: {self.title}"]
         lines += [f"  {what}: {old} → {new}" if old else f"  {what}: {new}" for what, old, new in self.changes]
-        return lines
+        return lines + list(self.detail)
 
 
 def _moment(stamp: str) -> datetime:
@@ -426,8 +447,10 @@ def make_plan(wish: Wish, state: ProjectState, today: date) -> Plan:
         raise Clarify(
             "Das kann ich nicht ausführen. Möglich ist je Satz eine Aktion: Aufgabe anlegen, abschließen, "
             "wieder öffnen, Fälligkeit setzen oder entfernen, in einen Abschnitt verschieben, umbenennen, "
-            "Unteraufgabe anlegen, Abschnitt anlegen."
+            "Unteraufgabe anlegen, Abschnitt anlegen, Beschreibung aus einem Dokument schreiben."
         )
+    if action == DESCRIBE:
+        raise Clarify("Für eine Beschreibung brauche ich den Suchindex; das geht nur über den Befehl selbst.")
     if action == NEW_SECTION:
         name = _title(wish.abschnitt or wish.titel)
         same = [section for _, section in state.sections if section.casefold() == name.casefold()]
@@ -545,10 +568,40 @@ def make_plan(wish: Wish, state: ProjectState, today: date) -> Plan:
     )
 
 
+def plan_description(wish: Wish, state: ProjectState, drafter: Drafter) -> Plan:
+    """Der Plan fuer "Beschreibung setzen": Aufgabe aufloesen, Entwurf holen, alt und neu zeigen."""
+    task = find_task(wish.aufgabe, [task for task in state.tasks if not task.completed])
+    try:
+        draft = drafter(task.name, wish.quelle)
+    except NoDescription as exc:
+        raise Clarify(str(exc)) from exc
+    if draft.text.strip() == task.notes.strip():
+        raise Clarify(f"„{task.name}“ hat genau diese Beschreibung schon.")
+    partial = f", {draft.used} von {draft.total} Abschnitten berücksichtigt" if draft.used < draft.total else ""
+    old = f"{len(task.notes.strip())} Zeichen" if task.notes.strip() else "leer"
+    detail = [f"  Quelle: Dokument „{draft.document}“ ({draft.source}{partial})"]
+    if draft.foreign:
+        detail.append(f"  Nicht im Dokument, bitte prüfen: {', '.join(draft.foreign[:12])}")
+    if task.notes.strip():
+        detail += ["", "Bisherige Beschreibung (wird ersetzt):", *task.notes.strip().splitlines()]
+    detail += ["", "Neue Beschreibung:", *draft.text.splitlines(), ""]
+    path = f"/tasks/{task.gid}"
+    return Plan(
+        DESCRIBE,
+        task.name,
+        (("Beschreibung", old, f"{len(draft.text)} Zeichen aus „{draft.document}“"),),
+        (Request("PUT", path, {"notes": draft.text}),),
+        (Request("PUT", path, {"notes": task.notes}),),
+        task.gid,
+        (("notes", draft.text),),
+        tuple(detail),
+    )
+
+
 # --- Ausfuehren (Code), mit Grenzkontrolle
 
 
-UPDATE_KEYS = {"completed", "due_on", "due_at", "name"}
+UPDATE_KEYS = {"completed", "due_on", "due_at", "name", "notes"}
 
 
 def check_allowed(request: Request, state: ProjectState, created: set[str]) -> None:
@@ -644,6 +697,8 @@ def execute(plan: Plan, state: ProjectState, writer: Writer, transport: Transpor
         actual = live.section_gid if name == "section" else after.get(name)
         if name == "due_at" and actual and value and _moment(actual) == _moment(value):
             continue
+        if name == "notes" and (actual or "").strip() == str(value).strip():
+            continue  # Asana haengt gelegentlich einen Zeilenumbruch an
         if actual != value:
             wrong.append(f"{name} ist {actual!r}, erwartet {value!r}")
     if plan.action in (CREATE, SUBTASK) and not after.get("name"):
@@ -854,8 +909,11 @@ def act(
     now: datetime,
     confirm: Callable[[str], str] | None,
     out: Callable[[str], None] = print,
+    drafter: Drafter | None = None,
 ) -> str:
-    """Ein Satz, eine Aktion. Gibt zurueck: "ausgefuehrt", "abgebrochen", "rueckfrage", "nicht_freigegeben" oder "fehler".
+    """Ein Satz, eine Aktion. ``drafter`` entwirft Beschreibungen aus Dokumenten; ohne ihn gibt es die Aktion nicht.
+
+    Gibt zurueck: "ausgefuehrt", "abgebrochen", "rueckfrage", "nicht_freigegeben" oder "fehler".
 
     ``confirm`` fragt den Nutzer; None (kein Terminal) heisst: nur der Plan, keine Ausfuehrung.
     """
@@ -864,7 +922,10 @@ def act(
         refuse_by_wording(sentence)
         wish = named_section(sentence, interpret(sentence, state, model), state)
         wish = refer_to_last(sentence, named_task(sentence, wish, state), state, journal)
-        plan = make_plan(wish, state, now.astimezone().date())
+        if wish.aktion == DESCRIBE and drafter is not None:
+            plan = plan_description(wish, state, drafter)
+        else:
+            plan = make_plan(wish, state, now.astimezone().date())
     except Clarify as exc:
         out(str(exc))
         return "rueckfrage"
@@ -937,6 +998,38 @@ def undo_last(
     return "ausgefuehrt"
 
 
+@contextmanager
+def description_drafter(profile: Profile):
+    """Der Entwurfs-Schritt fuer Beschreibungen, mit frisch abgeglichenem Suchindex.
+
+    Der Index wird erst geoeffnet, wenn eine Beschreibung verlangt ist.
+    """
+    opened: list = []
+
+    def drafter(task: str, hint: str) -> asana_describe.Draft:
+        from local_agents import search
+        from local_agents.context_window import OllamaError, fixed_context
+        from local_agents.store import Store
+
+        store, index = Store(), search.Index()
+        opened.extend((store, index))
+        search.refresh(index, profile, store)
+        embedder = search.prepare_meaning(index, profile)
+        name = profile.model_for(asana_describe.AGENT_NAME)
+        try:
+            large = (fixed_context(name or MODEL_NAME) or 0) >= asana_describe.LARGE_CONTEXT
+        except OllamaError:
+            large = False
+        budget = asana_describe.LARGE_BUDGET if large else asana_describe.SMALL_BUDGET
+        return asana_describe.draft(index, task, hint, ollama_model(name), embedder, budget)
+
+    try:
+        yield drafter
+    finally:
+        for resource in opened:
+            resource.close()
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         print(__doc__, file=sys.stderr)
@@ -960,7 +1053,8 @@ def main(argv: list[str]) -> int:
                 result = undo_last(profile, transport, writer, journal, now, confirm)
             else:
                 model = ollama_model(profile.model_for(AGENT_NAME))
-                result = act(argv[1], profile, model, transport, writer, journal, now, confirm)
+                with description_drafter(profile) as drafter:
+                    result = act(argv[1], profile, model, transport, writer, journal, now, confirm, drafter=drafter)
         except AsanaAccessError as exc:
             print(exc, file=sys.stderr)
             return 1

@@ -27,7 +27,7 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_evals import Dataset
 from pydantic_evals.evaluators import EvaluationReason, Evaluator, EvaluatorContext
 
-from local_agents import asana_actions, asana_tasks, ask, feedback, meeting_agent, message_agent, scrum_master, search, status_agent, stories
+from local_agents import asana_actions, asana_describe, asana_tasks, ask, feedback, meeting_agent, message_agent, scrum_master, search, status_agent, stories
 from local_agents.asana_mirror import MirroredTask
 from local_agents.checks import invented_numbers
 from local_agents.meeting_types import BY_ID
@@ -1120,6 +1120,96 @@ class Aktion(Evaluator[AktionInputs, AktionOutput, Any]):
         return EvaluationReason(value=not problems, reason="; ".join(problems))
 
 
+# --- Beschreibung einer Asana-Aufgabe aus einem Dokument
+
+
+class BeschreibungInputs(Strict):
+    aufgabe: str  # Titel der Aufgabe
+    hinweis: str = ""  # Worte, mit denen der Nutzer das Dokument nennt
+    ordner: str = "evals/dokumente"  # Markdown-Dateien, relativ zum Repo
+    budget: int = asana_describe.SMALL_BUDGET
+
+
+class BeschreibungOutput(BaseModel):
+    dokument: str = ""  # Titel des gewaehlten Dokuments
+    text: str = ""
+    maengel: list[str] = []  # was die Selbstpruefung am Text findet
+    fremd: list[str] = []  # Hauptworte, die im Dokument nicht vorkommen
+    rueckmeldung: str = ""  # statt eines Entwurfs: warum es keinen gibt
+    modell: str = ""
+
+
+def beschreibung_task(model: object) -> Callable[[BeschreibungInputs], BeschreibungOutput]:
+    """Die Aufgabe fuer pydantic-evals: Dokument waehlen, Beschreibung entwerfen lassen, pruefen."""
+
+    def run(inputs: BeschreibungInputs) -> BeschreibungOutput:
+        index = search.Index(":memory:")
+        try:
+            index.update(search.story_passages("Beispiel", REPO_ROOT / inputs.ordner))
+            with capture_run_messages() as messages:
+                try:
+                    draft = asana_describe.draft(index, inputs.aufgabe, inputs.hinweis, model, None, inputs.budget)
+                except asana_describe.NoDescription as exc:
+                    return BeschreibungOutput(rueckmeldung=str(exc), modell=model_said(messages))
+            material, _ = asana_describe.choose_material(index, draft.document, inputs.aufgabe, inputs.budget)
+            deps = asana_describe.DescribeDeps(inputs.aufgabe, draft.document, material, index.key_prefixes())
+            return BeschreibungOutput(
+                dokument=draft.document,
+                text=draft.text,
+                maengel=asana_describe.problems(draft.text, deps),
+                fremd=list(draft.foreign),
+                modell=model_said(messages),
+            )
+        finally:
+            index.close()
+
+    return run
+
+
+@dataclass
+class Beschreibung(Evaluator[BeschreibungInputs, BeschreibungOutput, Any]):
+    """Prueft den Entwurf einer Beschreibung.
+
+    Immer geprueft: Die Selbstpruefung findet nichts. ``dokument``: Textstueck
+    im Titel des gewaehlten Dokuments. ``nennt`` / ``nennt_nicht`` /
+    ``eines_von``: Textstuecke der Beschreibung. ``meldet``: Statt eines
+    Entwurfs sagt der Agent, warum es keinen gibt. ``fremd_hoechstens``: so
+    viele Hauptworte der Beschreibung duerfen im Dokument fehlen.
+    """
+
+    dokument: str = ""
+    nennt: list[str] = field(default_factory=list)
+    nennt_nicht: list[str] = field(default_factory=list)
+    eines_von: list[str] = field(default_factory=list)
+    meldet: str | None = None
+    fremd_hoechstens: int | None = None  # so viele Hauptworte duerfen im Dokument fehlen
+
+    def evaluate(self, ctx: EvaluatorContext[BeschreibungInputs, BeschreibungOutput, Any]) -> EvaluationReason:
+        output = ctx.output
+        if self.meldet is not None:
+            if output.text:
+                return EvaluationReason(value=False, reason=f"Entwurf statt Rückmeldung, aus „{output.dokument}“")
+            fine = self.meldet.casefold() in output.rueckmeldung.casefold()
+            return EvaluationReason(value=fine, reason="" if fine else f"andere Rückmeldung: {output.rueckmeldung}")
+        if not output.text:
+            return EvaluationReason(value=False, reason=f"kein Entwurf: {output.rueckmeldung}")
+        problems = list(output.maengel)
+        if self.dokument and self.dokument.casefold() not in output.dokument.casefold():
+            problems.append(f"Dokument „{output.dokument}“, erwartet „{self.dokument}“")
+        text = output.text.casefold()
+        for part in self.nennt:
+            if part.casefold() not in text:
+                problems.append(f"„{part}“ fehlt in der Beschreibung")
+        for part in self.nennt_nicht:
+            if part.casefold() in text:
+                problems.append(f"„{part}“ gehört nicht in die Beschreibung")
+        if self.eines_von and not any(part.casefold() in text for part in self.eines_von):
+            problems.append(f"keines von {', '.join(self.eines_von)} in der Beschreibung")
+        if self.fremd_hoechstens is not None and len(output.fremd) > self.fremd_hoechstens:
+            problems.append(f"Hauptworte, die nicht im Dokument stehen: {', '.join(output.fremd)}")
+        return EvaluationReason(value=not problems, reason="; ".join(problems))
+
+
 # --- Agenten und ihre Falldateien
 
 
@@ -1146,4 +1236,7 @@ AGENTS: dict[str, Suite] = {
     ask.AGENT_NAME: Suite(Dataset[FragenInputs, FragenOutput, Any], (Antwort,), fragen_task),
     asana_tasks.AGENT_NAME: Suite(Dataset[AsanaInputs, AsanaOutput, Any], (Aufgabenliste,), asana_task),
     asana_actions.AGENT_NAME: Suite(Dataset[AktionInputs, AktionOutput, Any], (Aktion,), aktion_task),
+    asana_describe.AGENT_NAME: Suite(
+        Dataset[BeschreibungInputs, BeschreibungOutput, Any], (Beschreibung,), beschreibung_task
+    ),
 }

@@ -34,6 +34,7 @@ Bestandene Läufe von allen Läufen; je Fall fünf Läufe, bei der Terminart zwe
 | Status-Agent | 9 | 45 von 45, 1 bis 2 s | 45 von 45, 8 bis 14 s |
 | Terminart | 13 | 24 von 26, 3 bis 18 s | Abbruch nach 10 bestandenen Läufen (rund 50 s je Lauf): Speichermangel |
 | Story-Erkennung | 5 | 19 von 25, unter 1 s | 25 von 25, 8 bis 21 s |
+| Beschreibung aus Dokument | 8 | 39 von 40, 3 bis 6 s | nicht gemessen |
 | Asana steuern (nur der Plan) | 24 | 109 von 115, nach Korrekturen 119 von 120, 1 bis 3 s | `qwen-turbo:iq3-m`: 48 von 48 bei 2 Läufen je Fall, 8 bis 25 s |
 | Asana-Aufgaben abfragen | 14 | 63, nach Korrekturen 69 von 70, 2 bis 3 s | nicht gemessen |
 | Gesprächs-Agent | 12 | 47, nach Korrekturen 60 von 60, 1 bis 2 s | nicht gemessen |
@@ -94,6 +95,16 @@ Die übrigen Fehlläufe waren Rückfragen statt eines Plans, also Fehler zur
 sicheren Seite. Das größere Modell `qwen-turbo:iq3-m` bestand alle Fälle, bei
 nur zwei Läufen je Fall und fünf- bis zehnfacher Dauer; das ist ein Hinweis,
 kein Beleg.
+
+Bei der Beschreibung aus einem Dokument (21.11., 39 von 40) scheiterte ein
+Lauf an etwas Dazugedichtetem: Aus einem dünnen Dokument machte das Modell
+„nächste Schritte" mit einer E-Mail, von der dort nichts steht. Die
+Selbstprüfung fängt erfundene Zahlen, aber keine erfundenen Sätze, und der
+Messfall erkennt sie nur an einzelnen Worten; die Schwäche tritt also
+vermutlich öfter auf, als die Quote zeigt. Dagegen stehen jetzt ein schärferer
+Auftrag und eine Lesehilfe im Plan: die Hauptworte des Entwurfs, die im
+Dokument nicht vorkommen. Die eingeschleuste Anweisung im Dokument wurde in
+allen fünf Läufen weder befolgt noch übernommen.
 
 Weiter bestehende Schwächen, alle mit `gpt-oss:20b`:
 
