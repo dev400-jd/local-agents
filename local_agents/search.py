@@ -90,6 +90,16 @@ STOPWORDS = frozenset(
     kannst könntest kann können muss müssen sollen sollte gibt geht machen tun""".split()
 )
 
+# Der Index ist abgeleitet: Aendert sich sein Aufbau, wird er verworfen und neu gebaut.
+SCHEMA_VERSION = 2
+DROP = """
+DROP TRIGGER IF EXISTS passages_insert;
+DROP TRIGGER IF EXISTS passages_delete;
+DROP TRIGGER IF EXISTS vectors_delete;
+DROP TABLE IF EXISTS passages_fts;
+DROP TABLE IF EXISTS vectors;
+DROP TABLE IF EXISTS passages;
+"""
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS passages (
     id      INTEGER PRIMARY KEY,
@@ -99,6 +109,9 @@ CREATE TABLE IF NOT EXISTS passages (
     context TEXT NOT NULL DEFAULT '',
     source  TEXT NOT NULL DEFAULT '',  -- woher: Dateiname, "Scrum Master 19.11.2026", ...
     key     TEXT NOT NULL DEFAULT '',  -- Story-Kuerzel, klein geschrieben
+    feature TEXT NOT NULL DEFAULT '',  -- Titel des Features, zu dem der Eintrag gehoert
+    position INTEGER NOT NULL DEFAULT 0,  -- Stelle der Story in ihrer Datei (1, 2, ...); 0 = keine Story
+    grp     TEXT NOT NULL DEFAULT '',  -- gemeinsame Kennung der Teile eines geteilten Eintrags
     text    TEXT NOT NULL,
     digest  TEXT NOT NULL
 );
@@ -134,10 +147,15 @@ class Passage:
     context: str = ""
     source: str = ""
     key: str = ""
+    feature: str = ""
+    position: int = 0  # Stelle der Story in ihrer Datei; 0 = keine Story
+    group: str = ""  # gemeinsame Kennung der Teile eines geteilten Eintrags; leer = ref
 
     @property
     def digest(self) -> str:
-        joined = "\x1f".join((self.kind, self.title, self.text, self.context, self.source, self.key))
+        joined = "\x1f".join(
+            (self.kind, self.title, self.text, self.context, self.source, self.key, self.feature, str(self.position), self.group)
+        )
         return hashlib.sha256(joined.encode()).hexdigest()
 
 
@@ -230,7 +248,7 @@ def _pieces(ref: str, kind: str, title: str, text: str, **extra) -> list[Passage
     if len(parts) <= 1:
         return [Passage(ref, kind, title, parts[0] if parts else "", **extra)]
     return [
-        Passage(f"{ref}/{number}", kind, f"{title} (Teil {number} von {len(parts)})", part, **extra)
+        Passage(f"{ref}/{number}", kind, f"{title} (Teil {number} von {len(parts)})", part, group=ref, **extra)
         for number, part in enumerate(parts, start=1)
     ]
 
@@ -245,17 +263,23 @@ def story_passages(label: str, folder: Path) -> list[Passage]:
             name = str(feature.path.relative_to(folder.expanduser()))
         except ValueError:
             name = feature.path.name
-        extra = {"context": label, "source": name}
+        extra = {"context": label, "source": name, "feature": feature.title}
         if feature.intro.strip():
             found += _pieces(f"{SECTION}:{name}#", SECTION, feature.title, feature.intro, **extra)
         for heading, text in feature.sections.items():
             if text.strip():
                 title = f"{feature.title}: {heading}"
                 found += _pieces(f"{SECTION}:{name}#{heading}", SECTION, title, text, **extra)
-        for story in feature.stories:
+        for position, story in enumerate(feature.stories, start=1):
             title = f"{story.name} ({feature.title})"
             found += _pieces(
-                f"{STORY}:{name}#{story.name}", STORY, title, story.text, key=story.key.casefold(), **extra
+                f"{STORY}:{name}#{story.name}",
+                STORY,
+                title,
+                story.text,
+                key=story.key.casefold(),
+                position=position,
+                **extra,
             )
     return found
 
@@ -338,6 +362,9 @@ class Index:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(str(path))
         self.db.row_factory = sqlite3.Row
+        if self.db.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
+            self.db.executescript(DROP)
+            self.db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         self.db.executescript(SCHEMA)
 
     def close(self) -> None:
@@ -365,9 +392,21 @@ class Index:
                 else:
                     added += 1
                 self.db.execute(
-                    "INSERT INTO passages (ref, kind, title, context, source, key, text, digest) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (ref, passage.kind, passage.title, passage.context, passage.source, passage.key, passage.text, digest),
+                    "INSERT INTO passages (ref, kind, title, context, source, key, feature, position, grp, text, digest) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        ref,
+                        passage.kind,
+                        passage.title,
+                        passage.context,
+                        passage.source,
+                        passage.key,
+                        passage.feature,
+                        passage.position,
+                        passage.group or ref,
+                        passage.text,
+                        digest,
+                    ),
                 )
         return Changes(added, changed, len(gone))
 
@@ -375,6 +414,43 @@ class Index:
         return Counter(
             {row["kind"]: row["n"] for row in self.db.execute("SELECT kind, count(*) AS n FROM passages GROUP BY kind")}
         )
+
+    # --- Aufbau: Features und ihre Stories
+
+    def features(self) -> list[str]:
+        """Titel aller Features im Index."""
+        rows = self.db.execute("SELECT DISTINCT feature FROM passages WHERE feature <> '' ORDER BY feature")
+        return [row["feature"] for row in rows]
+
+    def stories_of(self, feature: str) -> list[Passage]:
+        """Die Stories eines Features in der Reihenfolge der Datei, je Story ihr erster Teil."""
+        rows = self.db.execute(
+            "SELECT * FROM passages WHERE feature = ? AND kind = ? ORDER BY position, length(ref), ref",
+            (feature, STORY),
+        )
+        first: dict[str, Passage] = {}
+        for row in rows:
+            first.setdefault(row["grp"], _passage(row))
+        return list(first.values())
+
+    def parts(self, group: str) -> list[Passage]:
+        """Alle Teile eines Eintrags in der Reihenfolge des Textes."""
+        rows = self.db.execute("SELECT * FROM passages WHERE grp = ? ORDER BY length(ref), ref", (group,))
+        return [_passage(row) for row in rows]
+
+    def by_key(self, key: str, kinds: tuple[str, ...] = ()) -> list[Passage]:
+        """Eintraege mit diesem Story-Kuerzel: die Story zuerst, dann ihre Bemerkungen."""
+        kind_filter = f" AND kind IN ({', '.join('?' * len(kinds))})" if kinds else ""
+        rows = self.db.execute(
+            f"SELECT * FROM passages WHERE key = ?{kind_filter} ORDER BY kind = 'story' DESC, length(ref), ref",
+            (key.casefold(), *kinds),
+        )
+        return [_passage(row) for row in rows]
+
+    def key_prefixes(self) -> set[str]:
+        """Die Vorsilben der Story-Kuerzel im Bestand, klein geschrieben ("qg", "an")."""
+        rows = self.db.execute("SELECT DISTINCT key FROM passages WHERE key <> ''")
+        return {row["key"].rsplit("-", 1)[0] for row in rows}
 
     # --- Bedeutungssuche
 
@@ -444,13 +520,21 @@ class Index:
         limit: int = DEFAULT_LIMIT,
         kinds: tuple[str, ...] = (),
         embedder: Embedder | None = None,
+        feature: str = "",
     ) -> list[Hit]:
         """Die besten Treffer zur Frage, die besten zuerst; leer, wenn nichts passt.
 
         Mit ``embedder`` kommt zur Wortsuche die Bedeutungssuche: Beide liefern
         eine Rangliste, und ein Eintrag steht umso weiter vorn, je weiter vorn
         er in beiden steht. Eine in der Frage genannte Story steht immer zuerst.
+        ``feature`` beschraenkt die Suche auf die Eintraege eines Features.
         """
+        hits = self._search(question, max(limit, CANDIDATES) if feature else limit, kinds, embedder)
+        if feature:
+            hits = [hit for hit in hits if hit.passage.feature == feature]
+        return hits[:limit]
+
+    def _search(self, question: str, limit: int, kinds: tuple[str, ...], embedder: Embedder | None) -> list[Hit]:
         keys = story_keys(question)
         query = fts_query(question)
         kind_filter = f" AND p.kind IN ({', '.join('?' * len(kinds))})" if kinds else ""
@@ -504,7 +588,18 @@ class Index:
 
 
 def _passage(row: sqlite3.Row) -> Passage:
-    return Passage(row["ref"], row["kind"], row["title"], row["text"], row["context"], row["source"], row["key"])
+    return Passage(
+        row["ref"],
+        row["kind"],
+        row["title"],
+        row["text"],
+        row["context"],
+        row["source"],
+        row["key"],
+        row["feature"],
+        row["position"],
+        row["grp"],
+    )
 
 
 class _Row(dict):

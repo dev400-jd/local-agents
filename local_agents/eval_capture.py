@@ -9,6 +9,7 @@ Aufruf:
   python -m local_agents.evals merke stories datei.md          eine Markdown-Datei mit Stories
   python -m local_agents.evals merke nachricht 18              die Verschiebe-Aufgabe #18 mit ihrem Termin
   python -m local_agents.evals merke suche "Frage"             eine Suchanfrage gegen deinen echten Bestand
+  python -m local_agents.evals merke fragen "Frage"            eine Frage an den Gespraechs-Agenten, echter Bestand
 
 Der Fall landet in ``<agent>-alltag.yaml`` im privaten Ordner der Messung
 (ausserhalb des Repos, weil er Termintitel und Story-Inhalte enthaelt). Als
@@ -23,7 +24,7 @@ from pathlib import Path
 
 import yaml
 
-from local_agents import evals, search, status_agent
+from local_agents import ask, evals, search, status_agent
 from local_agents.eval_suites import AGENTS, _key
 from local_agents.meeting_agent import role_in
 from local_agents.meeting_types import OTHER_TYPE, keyword_hint
@@ -189,6 +190,30 @@ def suche_case(store: Store, profile: Profile, now: datetime, question: str) -> 
     }
 
 
+def fragen_case(store: Store, profile: Profile, now: datetime, question: str) -> dict:
+    """Eine Frage gegen den echten Bestand; erwartet wird zunaechst die jetzige Auswahl des Codes."""
+    if not question.strip():
+        raise CaptureError('Gib die Frage an, etwa: merke fragen "Was ist mit QG-3?"')
+    index = search.Index(":memory:")
+    try:
+        index.update(search.collect(profile, store))
+        selection = ask.select(index, question)
+    finally:
+        index.close()
+    titles = selection.titles()
+    if titles:
+        expectation = {"zuerst": titles[0]}
+    elif selection.outline:
+        expectation = {}
+    else:
+        expectation = {"ohne_modell": True}
+    return {
+        "name": _name(now, question),
+        "inputs": {"frage": question},
+        "evaluators": [{"Antwort": expectation}] if expectation else ["Antwort"],
+    }
+
+
 def case_text(case: dict) -> str:
     return yaml.safe_dump([case], allow_unicode=True, sort_keys=False, default_flow_style=False, width=1000)
 
@@ -249,6 +274,8 @@ def main(args: list[str]) -> int:
             case = stories_case(now, argument)
         elif agent == search.AGENT_NAME:
             case = suche_case(store, profile, now, argument)
+        elif agent == ask.AGENT_NAME:
+            case = fragen_case(store, profile, now, argument)
         else:
             raise CaptureError(f"Für {agent} gibt es noch kein Festhalten.")
         path = append_case(agent, case, evals.private_dir())

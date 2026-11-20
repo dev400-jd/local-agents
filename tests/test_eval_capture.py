@@ -161,6 +161,19 @@ class TestOtherAgents(CaptureCase):
         with self.assertRaises(capture.CaptureError):
             capture.suche_case(self.store, profile, NOW, " ")
 
+    def test_question_for_the_conversation_agent_expects_the_current_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as vault:
+            Path(vault, "feature.md").write_text(
+                "# Titel\n\n## QG-1: Prüfregeln\n\nRegeln für Lieferdaten.\n\n## QG-2: Bericht\n\nWochenbericht.\n",
+                encoding="utf-8",
+            )
+            profile = Profile(contexts=(Context("kunde-acme", "kunde", "Kunde ACME", stories_dir=vault),))
+            last = capture.fragen_case(self.store, profile, NOW, "Was ist als Letztes zu tun?")
+            nothing = capture.fragen_case(self.store, profile, NOW, "Wie wird das Wetter morgen in Frankfurt?")
+        self.assertEqual(last["evaluators"], [{"Antwort": {"zuerst": "QG-2: Bericht (Titel)"}}])
+        self.assertEqual(nothing["evaluators"], [{"Antwort": {"ohne_modell": True}}])
+        self.assertEqual(len(self.saved("fragen", last)), 1)
+
 
 class TestAppend(CaptureCase):
     def test_second_case_is_appended_and_a_broken_one_leaves_the_file_untouched(self) -> None:

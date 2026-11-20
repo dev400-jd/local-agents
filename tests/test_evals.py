@@ -441,10 +441,27 @@ class TestCaseFiles(unittest.TestCase):
     def test_repo_cases_load_and_cover_both_agents(self) -> None:
         cases = evals.load_cases([evals.REPO_CASES])
         self.assertEqual(
-            sorted(cases), ["nachricht", "rueckmeldung", "scrum_master", "status", "stories", "suche", "termin"]
+            sorted(cases),
+            ["fragen", "nachricht", "rueckmeldung", "scrum_master", "status", "stories", "suche", "termin"],
         )
         self.assertGreaterEqual(len(cases["scrum_master"]), 15)
         self.assertGreaterEqual(len(cases["rueckmeldung"]), 12)
+
+    def test_question_cases_select_the_expected_entries(self) -> None:
+        # Die Auswahl der Eintraege rechnet der Code; sie muss in jedem Fall stimmen,
+        # was auch immer das Modell danach antwortet.
+        def respond(messages, info):
+            return ModelResponse(parts=[TextPart("Dazu steht dort nichts.")])
+
+        cases = evals.load_cases([evals.REPO_CASES])["fragen"]
+        results = evals.run_cases("fragen", cases, FunctionModel(respond), 1)
+        wrong = [
+            failure
+            for result in results
+            for failure in result.failures
+            if any(mark in failure for mark in ("nicht ausgewählt", "nicht der erste Eintrag", "gefunden"))
+        ]
+        self.assertEqual(wrong, [])
 
     def test_search_cases_pass_except_the_known_limits_of_word_search(self) -> None:
         # Die Suche rechnet ohne Modell, also laeuft ihre Messung auch hier mit.

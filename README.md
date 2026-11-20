@@ -928,6 +928,83 @@ Grenzen:
   Bedeutungssuche nimmt solche Treffer nicht wieder heraus, sie stuft sie nur
   herab.
 
+## Gesprächs-Agent
+
+Mit ihm unterhältst du dich über den Inhalt der Stories. Er liest nur; Stories
+und Bemerkungen ändert er nicht.
+
+```bash
+.venv/bin/python -m local_agents.ask            # Gespräch im Terminal
+.venv/bin/python -m local_agents.ask "Frage"    # eine einzelne Frage
+```
+
+```text
+Du: Fasse in einem Satz zusammen, was im Feature Anbindung als Letztes zu tun ist
+
+Im Feature „Anbindung der Lieferanten“ ist zuletzt die Story AN-4 – Überwachung der Einlieferungen zu erledigen.
+
+Grundlage (letzte Story im Feature „Anbindung der Lieferanten“): AN-4: Überwachung der Einlieferungen
+
+Du: Und welche Akzeptanzkriterien hat sie?
+
+- Eine Übersicht zeigt je Lieferant die letzte Einlieferung.
+- Bleibt eine erwartete Lieferung bis 10 Uhr aus, gibt es eine Warnung.
+
+Grundlage (bisheriges Thema): AN-4: Überwachung der Einlieferungen
+```
+
+Im Gespräch beendet eine leere Zeile oder `/ende`, `/neu` wechselt das Thema,
+und `/quellen` zeigt die Einträge, aus denen die letzte Antwort stammt.
+
+Je Frage läuft dasselbe Muster wie beim Nachrichten-Agenten:
+
+1. **Auswählen (Code):** Der Code entscheidet, welche Einträge das Modell
+   bekommt, in dieser Reihenfolge:
+
+   | Die Frage … | Ausgewählt wird |
+   |---|---|
+   | nennt eine Stelle: „als Letztes", „zuerst", „womit beginnt", „nach QG-3", „vor QG-3" | die Story an dieser Stelle im Feature, mit allen Teilen und ihren Bemerkungen |
+   | nennt ein Kürzel: „QG-3" | diese Story mit ihren Bemerkungen |
+   | schließt an die vorige Antwort an: beginnt mit „und", verweist („dazu", „dort", „sie") oder hat höchstens zwei Inhaltsworte | die Story der vorigen Antwort |
+   | fragt nach dem Überblick: „welche Stories", „Übersicht", „Reihenfolge" | die Gliederung des Features, ohne genanntes Feature die Liste aller Features |
+   | sonst | die besten vier Treffer der [Suche](#suche), in einem genannten Feature zuerst dort |
+
+   Ein Feature gilt als genannt, wenn die Frage ein Wort enthält, das nur in
+   seinem Titel steht. Zur Auswahl kommt immer die Gliederung des Features:
+   die Namen seiner Stories in der Reihenfolge der Datei.
+2. **Antworten (Modell):** Das Modell bekommt nur diese Einträge (höchstens
+   rund 9000 Zeichen), die Gliederung und die letzten zwei Wortwechsel, und
+   antwortet in der verlangten Form.
+3. **Prüfen (Code):** Jedes Story-Kürzel und jede Zahl der Antwort muss in dem
+   stehen, was das Modell gesehen hat. Sonst geht die Antwort zurück ans
+   Modell (bis zu dreimal); gelingt es nicht, zeigt der Agent die Fundstellen
+   statt einer Antwort.
+
+Unter jeder Antwort steht die Grundlage: wie ausgewählt wurde und welche
+Einträge es waren. Findet der Code nichts, sagt er das selbst, und das Modell
+wird nicht gefragt.
+
+Grenzen:
+
+- **„Als Letztes" heißt: zuletzt in der Datei.** Ob diese Story auch zeitlich
+  zuletzt dran ist, weiß der Code nicht.
+- **Geprüft werden Kürzel und Zahlen, nicht der Sinn.** Eine Antwort kann die
+  Einträge falsch wiedergeben, ohne dass die Prüfung es merkt. Die Zeile
+  „Grundlage" und `/quellen` sind dafür da, nachzusehen.
+- **Die Regeln lesen Worte, nicht Absichten.** „Das letzte Mal, als wir über
+  Zugänge sprachen" gilt als Frage nach der letzten Story. Ein neues Thema in
+  zwei Worten („Zugänge sperren?") gilt als Anschlussfrage; `/neu` oder ein
+  ganzer Satz hilft.
+- **Lange Stories werden nach rund 9000 Zeichen abgeschnitten;** die Auswahl
+  nimmt die Teile vom Anfang.
+- **Das Modell braucht mindestens 8K Kontext.** Mit `qwen3.8:27b-mlx`, das hier
+  mit 4096 Tokens lädt, wird der Auftrag abgeschnitten; siehe
+  [Kontextfenster](#kontextfenster).
+- Fragen über mehrere Features hinweg („wo überall kommt X vor?") beantwortet
+  er nur so weit, wie die vier besten Treffer reichen.
+
+Anderes Modell: `fragen = "…"` unter `[models]` im Profil.
+
 ## User Stories als Markdown
 
 Die Wissensbasis für die inhaltliche Vorbereitung (zuerst das Daily) sind die
@@ -1627,6 +1704,7 @@ legt einen solchen Fall im privaten Ordner ab, in `<agent>-alltag.yaml`:
 .venv/bin/python -m local_agents.evals merke stories ~/pfad/feature.md # eine Datei mit Stories
 .venv/bin/python -m local_agents.evals merke nachricht 18              # die Verschiebe-Aufgabe #18 mit ihrem Termin
 .venv/bin/python -m local_agents.evals merke suche "Frage"             # eine Suchanfrage gegen deinen echten Bestand
+.venv/bin/python -m local_agents.evals merke fragen "Frage"            # eine Frage an den Gesprächs-Agenten, echter Bestand
 ```
 
 Als Erwartung steht im Fall zunächst, was der Agent tatsächlich getan hat

@@ -99,6 +99,7 @@ language = "de"
 [models]
 # default = "qwen3.8:27b-mlx"
 # status = "qwen3.5:9b-q8_0"
+# fragen = "gpt-oss:20b-ctx16k"    # Gespraechs-Agent; braucht mindestens 8K Kontext
 
 # Telegram fuer den Scrum Master: aus, solange enabled nicht true ist.
 # ACHTUNG: Nachrichten laufen ueber die Server von Telegram und verlassen den

@@ -1,0 +1,96 @@
+# yaml-language-server: $schema=fragen_schema.json
+# Erfundene Fälle für den Gesprächs-Agenten: Wählt der Code die richtigen
+# Einträge aus, und antwortet das Modell belegt und in der verlangten Form?
+# Die Dokumente liegen in evals/suche_vault. Aufbau: README, Abschnitt "Messen".
+# Immer geprüft wird die Selbstprüfung des Agenten (kein fremdes Kürzel, keine
+# erfundene Zahl) und dass das Modell selbst geantwortet hat.
+name: fragen
+cases:
+- name: "Letzte Story eines Features, in einem Satz"
+  inputs:
+    frage: "Fasse in einem Satz zusammen, was im Feature Anbindung als Letztes zu tun ist."
+    ordner: &vault "evals/suche_vault"
+    bemerkungen: &bemerkungen
+    - {story: "AN-2: Schnittstelle für große Lieferanten", text: "Die Abstimmung mit dem ersten Großlieferanten ist auf nächste Woche verschoben."}
+    - {story: "QG-3: Quarantäne für abgewiesene Lieferungen", text: "Aufbewahrungsfrist ist mit dem Datenschutz noch nicht geklärt."}
+  evaluators:
+  - Antwort: {zuerst: "AN-4", nennt: ["AN-4"], nennt_nicht: ["AN-1", "AN-2", "AN-3"], saetze_hoechstens: 1}
+- name: "Erste Story eines Features"
+  inputs:
+    frage: "Womit beginnt die Datenqualität?"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Antwort: {zuerst: "QG-1", nennt: ["QG-1"]}
+- name: "Story nach einer genannten"
+  inputs:
+    frage: "Was kommt nach QG-3 und worum geht es dort?"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Antwort: {zuerst: "QG-4", nennt: ["QG-4"], eines_von: ["Schwellenwert", "Ausreißer"]}
+- name: "Genannte Story mit ihrer Bemerkung"
+  inputs:
+    frage: "Was ist bei QG-3 noch offen?"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Antwort: {zuerst: "QG-3", waehlt: ["Bemerkung zu QG-3"], eines_von: ["Datenschutz", "Aufbewahrungsfrist"]}
+- name: "Zahl aus der Story wörtlich"
+  inputs:
+    frage: "Wie lange bleiben abgewiesene Datensätze erhalten?"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Antwort: {waehlt: ["QG-3"], nennt: ["30 Tage"]}
+- name: "Akzeptanzkriterien als Liste"
+  inputs:
+    frage: "Nenne die Akzeptanzkriterien von AN-3 als Liste."
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Antwort: {zuerst: "AN-3", nennt: ["12 Monaten", "protokolliert"], nennt_nicht: ["Empfangsbestätigung", "10 Uhr"]}
+- name: "Anschlussfrage bleibt bei der Story"
+  inputs:
+    frage: "Und wie hoch ist der Aufwand?"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+    thema: "AN-2"
+    vorher: ["Was ist mit AN-2?", "AN-2 ist die Schnittstelle, über die große Lieferanten Lieferungen melden."]
+  evaluators:
+  - Antwort: {zuerst: "AN-2", nennt: ["13"], nennt_nicht: ["5 PT", "8 PT"]}
+- name: "Abhängigkeit über zwei Features"
+  inputs:
+    frage: "Wovon hängt AN-2 ab?"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Antwort: {zuerst: "AN-2", nennt: ["QG-1", "AN-3"]}
+- name: "Überblick über ein Feature"
+  inputs:
+    frage: "Welche Stories gibt es zur Datenqualität?"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Antwort: {nennt: ["QG-1", "QG-2", "QG-3", "QG-4"], nennt_nicht: ["AN-1", "QG-5"]}
+- name: "Steht nicht in den Einträgen: nicht raten"
+  inputs:
+    frage: "Wer ist bei QG-2 der Product Owner und bis wann muss die Story fertig sein?"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Antwort: {zuerst: "QG-2", eines_von: ["nicht", "keine", "kein "], nennt_nicht: ["2026", "2027", "Dezember", "Januar"]}
+- name: "Umschriebene Frage ohne Kürzel"
+  inputs:
+    frage: "Wie kommen kleine Lieferanten mit ihren Lieferscheinen ins System?"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Antwort: {waehlt: ["AN-1"], eines_von: ["CSV", "hochladen", "Dateitransfer"]}
+- name: "Fremdes Thema: der Code antwortet selbst"
+  inputs:
+    frage: "Wie wird das Wetter morgen in Frankfurt am Main?"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Antwort: {ohne_modell: true}

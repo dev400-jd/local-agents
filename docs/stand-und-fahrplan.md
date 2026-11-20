@@ -10,7 +10,7 @@ beschrieben ist, zieht die betroffene Zeile nach und setzt das Datum oben neu.
 
 ## Bestand
 
-Vierzehn Agenten und Bausteine lesen Kalender, Asana und Story-Dateien, machen
+Fünfzehn Agenten und Bausteine lesen Kalender, Asana und Story-Dateien, machen
 daraus Aufgaben und Notizen und sprechen mit dem Nutzer. Einer davon erledigt
 selbst eine Aufgabe: Der Nachrichten-Agent schreibt den Entwurf zu einer
 Verschiebe-Aufgabe.
@@ -28,7 +28,8 @@ Verschiebe-Aufgabe.
 | Scrum Master | `scrum_master.py`, `telegram_bot.py` | Vermerkt Bemerkungen je Story, auf Wunsch fürs nächste Daily, per Terminal, Dialog oder Telegram | Beantwortet keine Fragen. Ein Satz zu mehreren Stories landet ganz bei jeder. Der Daily-Bezug hängt an Stichwörtern. |
 | Sprache | `voice.py`, `listen.py` | Vorlesen (Piper) und Zuhören (Whisper), beides lokal | Kein durchgehendes Gespräch, nur Frage und Antwort an einer Stelle im Planungs-Agenten. |
 | Messung | `evals.py`, `eval_suites.py`, `eval_capture.py` | Lässt fünf Agenten gegen feste Fälle laufen (auf Basis von pydantic-evals): Scrum Master, Rückmeldung, Status-Agent, Terminart, Story-Erkennung. Mehrfach, mit Quote, Mitschnitt der Modellantwort und Vergleich zum letzten Lauf. `merke` hält echte Fälle fest. | 55 erfundene Fälle, noch keine echten. Nicht gemessen: Ergebnisliste des Termin-Agenten, freie Texte von Kalender- und Asana-Agent, Spracheingabe. |
-| Suche | `search.py` | Findet nach Worten und, mit Embedding-Modell, nach Bedeutung die passenden Stories, Abschnitte, Bemerkungen, Einordnungen und Nachrichten zu einer Frage; gleicht den Index bei jedem Aufruf ab | Bedeutungssuche nur mit Embedding-Modell im Profil, ihre Schwelle ist an erfundenen Fragen eingestellt. Fragen nach dem Aufbau („was kommt zuletzt?") beantwortet sie nicht. Noch kein Agent nutzt sie. Asana und Kalender fehlen. 21 erfundene Messfälle, keine echten. |
+| Gesprächs-Agent | `ask.py` | Beantwortet Fragen zum Inhalt der Stories im Gespräch: Der Code wählt die Einträge (Kürzel, Stelle im Feature, Anschlussfrage, Suche), das Modell antwortet daraus, der Code prüft Kürzel und Zahlen | Nur lesend. Regeln lesen Worte, nicht Absichten. Geprüft wird nicht der Sinn der Antwort. 12 erfundene Messfälle, mit dem Modell noch nicht gemessen. |
+| Suche | `search.py` | Findet nach Worten und, mit Embedding-Modell, nach Bedeutung die passenden Stories, Abschnitte, Bemerkungen, Einordnungen und Nachrichten zu einer Frage; gleicht den Index bei jedem Aufruf ab | Bedeutungssuche nur mit Embedding-Modell im Profil, ihre Schwelle ist an erfundenen Fragen eingestellt. Fragen nach dem Aufbau („was kommt zuletzt?") beantwortet sie nicht. Asana und Kalender fehlen. 21 erfundene Messfälle, keine echten. |
 | Kontextfenster | `context_window.py` | Zeigt je Modell, ob das Kontextfenster feststeht, und legt eine Variante mit 16K an | Die Variante muss von Hand ins Profil. Für das große Modell nicht erprobt. Kein Agent warnt, wenn ein Auftrag das Fenster sprengt. |
 | Profil und Datenbank | `profile.py`, `store.py` | Gemeinsames Gedächtnis: Kontexte, Rolle, Stresslevel, Aufgaben, Notizen, Laufprotokoll | Kein Gedächtnis über Gespräche, keine gelernten Vorlieben. |
 
@@ -72,6 +73,10 @@ In drei Schritten:
   `bge-m3`, zusammengeführt mit der Wortsuche; dazu die Suche nach Wortteilen.
   Auf den 21 erfundenen Fällen: Wortsuche 18, mit Bedeutungssuche 21. Schwelle
   und Gewichtung sind an diesen Fällen eingestellt; echte Fälle fehlen.
+- **Gesprächs-Agent, gebaut (2026-11-20):** Fragen zum Inhalt der Stories im
+  Gespräch (`ask.py`), vorgezogen vor 2c, weil die erste echte Suchanfrage
+  eine Antwort erwartete und keine Fundstellen. Er nutzt die Suche und kennt
+  dazu den Aufbau der Dateien (erste, letzte, nächste Story).
 - **2c, offen:** Vorbereitungs-Agent. Er erledigt Vorbereitungs-Aufgaben aus
   den Treffern der Suche, nennt zu jeder Aussage die Quelle und legt den
   Entwurf zur Freigabe vor. Der Code wählt die Treffer aus und prüft, dass

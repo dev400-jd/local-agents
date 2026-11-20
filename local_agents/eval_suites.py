@@ -26,7 +26,7 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_evals import Dataset
 from pydantic_evals.evaluators import EvaluationReason, Evaluator, EvaluatorContext
 
-from local_agents import feedback, meeting_agent, message_agent, scrum_master, search, status_agent, stories
+from local_agents import ask, feedback, meeting_agent, message_agent, scrum_master, search, status_agent, stories
 from local_agents.checks import invented_numbers
 from local_agents.meeting_types import BY_ID
 from local_agents.profile import CUSTOMER, INTERNAL, Context, Profile, load_profile
@@ -761,6 +761,119 @@ class Treffer(Evaluator[SucheInputs, SucheOutput, Any]):
         return EvaluationReason(value=not problems, reason="; ".join(problems))
 
 
+# --- Gespraechs-Agent
+
+
+class FragenInputs(Strict):
+    frage: str
+    # Ordner mit Markdown-Dateien, relativ zum Repo. Leer: der echte Bestand.
+    ordner: str = ""
+    bemerkungen: list[SucheBemerkung] = []
+    thema: str = ""  # Kuerzel der Story aus der vorigen Antwort, fuer Anschlussfragen
+    vorher: list[str] = []  # voriger Wortwechsel: Frage, Antwort, Frage, Antwort ...
+
+
+class FragenOutput(BaseModel):
+    antwort: str
+    quelle: str  # "modell", "code" (nichts gefunden) oder "fundstellen" (Modell lieferte nichts Belegtes)
+    gewaehlt: list[str]  # Titel der Eintraege, die das Modell bekam
+    wie: str  # wie der Code ausgewaehlt hat
+    maengel: list[str]  # was die Selbstpruefung an der Antwort findet
+    modell: str = ""
+
+
+def fragen_task(model: object) -> Callable[[FragenInputs], FragenOutput]:
+    """Die Aufgabe fuer pydantic-evals: Eintraege auswaehlen, antworten lassen, Antwort pruefen."""
+
+    def run(inputs: FragenInputs) -> FragenOutput:
+        index = search.Index(":memory:")
+        try:
+            if inputs.ordner:
+                store = Store(":memory:")
+                for remark in inputs.bemerkungen:
+                    store.add_story_note(remark.story, "", remark.text)
+                passages = search.story_passages("Beispiel", REPO_ROOT / inputs.ordner)
+                passages += search.store_passages(store, Profile())
+            else:
+                store = Store()
+                passages = search.collect(load_profile(), store)
+            store.close()
+            index.update(passages)
+            talk = ask.Conversation(index, model)
+            if inputs.thema:
+                stories_found = index.by_key(inputs.thema, (search.STORY,))
+                talk.focus = (stories_found[0].group or stories_found[0].ref) if stories_found else ""
+            talk.history = list(zip(inputs.vorher[::2], inputs.vorher[1::2]))
+            with capture_run_messages() as messages:
+                answer = talk.ask(inputs.frage)
+            deps = ask.AskDeps(answer.selection, inputs.frage, talk.history[:-1], index.key_prefixes())
+            return FragenOutput(
+                antwort=answer.text,
+                quelle=answer.source,
+                gewaehlt=answer.selection.titles(),
+                wie=answer.selection.how,
+                maengel=ask.problems(answer.text, deps) if answer.source == ask.MODEL else [],
+                modell=model_said(messages),
+            )
+        finally:
+            index.close()
+
+    return run
+
+
+@dataclass
+class Antwort(Evaluator[FragenInputs, FragenOutput, Any]):
+    """Prueft Auswahl und Antwort des Gespraechs-Agenten.
+
+    Immer geprueft: Die Selbstpruefung findet nichts, und das Modell hat selbst
+    geantwortet (ausser bei ``ohne_modell``). ``waehlt``: Jedes Textstueck steht
+    im Titel eines ausgewaehlten Eintrags; ``zuerst`` im Titel des ersten.
+    ``nennt`` / ``nennt_nicht`` / ``eines_von``: Textstuecke der Antwort.
+    ``saetze_hoechstens``: Laenge der Antwort. ``ohne_modell``: Der Code
+    antwortet selbst, weil nichts gefunden wurde.
+    """
+
+    waehlt: list[str] = field(default_factory=list)
+    zuerst: str = ""
+    nennt: list[str] = field(default_factory=list)
+    nennt_nicht: list[str] = field(default_factory=list)
+    eines_von: list[str] = field(default_factory=list)
+    saetze_hoechstens: int = 0
+    ohne_modell: bool = False
+
+    def evaluate(self, ctx: EvaluatorContext[FragenInputs, FragenOutput, Any]) -> EvaluationReason:
+        output = ctx.output
+        problems = list(output.maengel)
+        if self.ohne_modell != (output.quelle == ask.CODE):
+            problems.append(
+                "es sollte nichts gefunden werden" if self.ohne_modell else "nichts gefunden, das Modell wurde nicht gefragt"
+            )
+        if output.quelle == ask.FALLBACK:
+            problems.append("Modell lieferte keine belegte Antwort (Fundstellen statt Antwort)")
+        chosen = [title.casefold() for title in output.gewaehlt]
+        for part in self.waehlt:
+            if not any(part.casefold() in title for title in chosen):
+                problems.append(f"„{part}“ nicht ausgewählt")
+        if self.zuerst and (not chosen or self.zuerst.casefold() not in chosen[0]):
+            problems.append(f"„{self.zuerst}“ ist nicht der erste Eintrag")
+        if (self.waehlt or self.zuerst) and problems and output.gewaehlt:
+            problems.append(f"ausgewählt ({output.wie}): {'; '.join(output.gewaehlt)}")
+        text = output.antwort.casefold()
+        for part in self.nennt:
+            if part.casefold() not in text:
+                problems.append(f"„{part}“ fehlt in der Antwort")
+        for part in self.nennt_nicht:
+            if part.casefold() in text:
+                problems.append(f"„{part}“ gehört nicht in die Antwort")
+        if self.eines_von and not any(part.casefold() in text for part in self.eines_von):
+            problems.append(f"keines von {', '.join(self.eines_von)} in der Antwort")
+        if self.saetze_hoechstens:
+            sentences = [piece for piece in re.split(r"(?<=[.!?])\s+", output.antwort.strip()) if piece]
+            if len(sentences) > self.saetze_hoechstens:
+                problems.append(f"{len(sentences)} Sätze, erlaubt sind {self.saetze_hoechstens}")
+        return EvaluationReason(value=not problems, reason="; ".join(problems))
+
+
 # --- Agenten und ihre Falldateien
 
 
@@ -784,4 +897,5 @@ AGENTS: dict[str, Suite] = {
     stories.AGENT_NAME: Suite(Dataset[StoriesInputs, StoriesOutput, Any], (Stories,), stories_task),
     message_agent.AGENT_NAME: Suite(Dataset[NachrichtInputs, NachrichtOutput, Any], (Nachricht,), nachricht_task),
     search.AGENT_NAME: Suite(Dataset[SucheInputs, SucheOutput, Any], (Treffer,), suche_task, uses_model=False),
+    ask.AGENT_NAME: Suite(Dataset[FragenInputs, FragenOutput, Any], (Antwort,), fragen_task),
 }
