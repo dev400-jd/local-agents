@@ -79,6 +79,8 @@ class Profile:
     # Kalenderwache (watch.py): Aenderungen als macOS-Mitteilung zeigen, vorlesen.
     # So oft gleicht die Wache den Asana-Spiegel ab (Minuten); 0 = gar nicht.
     asana_sync_minutes: int = 30
+    # Projekte, in die der Agent schreiben darf (asana_actions.py); leer = nirgends.
+    asana_write_projects: tuple[str, ...] = ()
     # Embedding-Modell der Bedeutungssuche (search.py); leer = nur Wortsuche.
     search_embeddings: str = ""
     watch_notify: bool = True
@@ -202,6 +204,12 @@ def profile_path() -> Path:
     return Path(os.environ.get("LOCAL_AGENTS_PROFILE", DEFAULT_PROFILE_PATH))
 
 
+def _names(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list) or not all(isinstance(item, str) and item.strip() for item in value):
+        raise ProfileError('write_projects unter [asana] braucht eine Liste von Projektnamen, etwa ["Mein Projekt"].')
+    return tuple(item.strip() for item in value)
+
+
 def _minutes(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ProfileError("sync_minutes unter [asana] braucht eine ganze Zahl ab 0 (0 = aus).")
@@ -291,6 +299,7 @@ def load_profile(path: Path | None = None) -> Profile:
         plan_skip=tuple(word.casefold() for word in planning.get("skip", [])),
         sync_enabled=bool(planning.get("sync", True)),
         asana_sync_minutes=_minutes(data.get("asana", {}).get("sync_minutes", 30)),
+        asana_write_projects=_names(data.get("asana", {}).get("write_projects", [])),
         search_embeddings=str(data.get("search", {}).get("embeddings", "")).strip(),
         watch_notify=bool(data.get("watch", {}).get("notify", True)),
         watch_speak=bool(data.get("watch", {}).get("speak", False)),

@@ -27,7 +27,7 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_evals import Dataset
 from pydantic_evals.evaluators import EvaluationReason, Evaluator, EvaluatorContext
 
-from local_agents import asana_tasks, ask, feedback, meeting_agent, message_agent, scrum_master, search, status_agent, stories
+from local_agents import asana_actions, asana_tasks, ask, feedback, meeting_agent, message_agent, scrum_master, search, status_agent, stories
 from local_agents.asana_mirror import MirroredTask
 from local_agents.checks import invented_numbers
 from local_agents.meeting_types import BY_ID
@@ -986,6 +986,135 @@ class Aufgabenliste(Evaluator[AsanaInputs, AsanaOutput, Any]):
         return EvaluationReason(value=not problems, reason="; ".join(problems))
 
 
+# --- Asana steuern
+
+
+class AktionAufgabe(Strict):
+    """Eine Aufgabe im nachgebauten Projekt."""
+
+    name: str
+    abschnitt: str = "Offen"
+    faellig: date | None = None
+    erledigt: bool = False
+
+
+class AktionInputs(Strict):
+    satz: str
+    heute: date
+    aufgaben: list[AktionAufgabe]
+    abschnitte: list[str] = ["Offen", "In Arbeit", "Erledigt"]
+    letzte: str = ""  # Name der Aufgabe aus der vorigen Aktion, fuer Verweise wie "die von eben"
+
+
+class AktionOutput(BaseModel):
+    aktion: str = ""  # Aktion des Plans; leer bei einer Rueckfrage
+    aufgabe: str = ""  # betroffene oder neue Aufgabe
+    plan: list[str] = []  # die Zeilen, die der Nutzer zur Freigabe saehe
+    anfragen: list[str] = []  # was nach der Freigabe an Asana ginge, als "METHODE Pfad"
+    rueckfrage: str = ""
+    modell: str = ""
+
+
+class _LastAction:
+    """Ein Protokoll mit genau einem Eintrag: die Aufgabe der vorigen Aktion."""
+
+    def __init__(self, task_gid: str, project_gid: str) -> None:
+        self.entry = {"task_gid": task_gid, "project_gid": project_gid}
+
+    def last_open(self, sections: bool | None = None) -> dict | None:
+        return None if sections else self.entry
+
+
+def aktion_task(model: object) -> Callable[[AktionInputs], AktionOutput]:
+    """Die Aufgabe fuer pydantic-evals: Satz uebersetzen lassen und gegen ein nachgebautes Projekt planen.
+
+    Ausgefuehrt wird nichts; gemessen wird der Plan, den der Nutzer zur Freigabe bekaeme.
+    """
+
+    def run(inputs: AktionInputs) -> AktionOutput:
+        sections = tuple((f"s{number}", name) for number, name in enumerate(inputs.abschnitte))
+        by_name = {name: gid for gid, name in sections}
+        state = asana_actions.ProjectState(
+            "p1",
+            "Übungsprojekt",
+            sections,
+            tuple(
+                asana_actions.LiveTask(
+                    f"t{number}",
+                    item.name,
+                    item.erledigt,
+                    item.faellig.isoformat() if item.faellig else "",
+                    by_name.get(item.abschnitt, ""),
+                    item.abschnitt if item.abschnitt in by_name else "",
+                )
+                for number, item in enumerate(inputs.aufgaben)
+            ),
+        )
+        with capture_run_messages() as messages:
+            wish = asana_actions.interpret(inputs.satz, state, model)
+        said = model_said(messages)
+        last = next((task for task in state.tasks if inputs.letzte and task.name == inputs.letzte), None)
+        if last is not None:
+            wish = asana_actions.refer_to_last(inputs.satz, wish, state, _LastAction(last.gid, state.gid))
+        try:
+            plan = asana_actions.make_plan(wish, state, inputs.heute)
+        except asana_actions.Clarify as exc:
+            return AktionOutput(rueckfrage=str(exc), modell=said)
+        if plan.action == asana_actions.NEW_SECTION:
+            return AktionOutput(aktion=plan.action, aufgabe=plan.title, plan=plan.lines(state.name), modell=said)
+        for request in plan.requests:  # die Grenzkontrolle gilt auch in der Messung
+            data = {key: ("t0" if value == "<neu>" else value) for key, value in request.data.items()}
+            asana_actions.check_allowed(asana_actions.Request(request.method, request.path, data), state, set())
+        return AktionOutput(
+            aktion=plan.action,
+            aufgabe=plan.title,
+            plan=plan.lines(state.name),
+            anfragen=[f"{request.method} {request.path}" for request in plan.requests],
+            modell=said,
+        )
+
+    return run
+
+
+@dataclass
+class Aktion(Evaluator[AktionInputs, AktionOutput, Any]):
+    """Prueft den Plan, den der Agent aus einem Satz macht.
+
+    ``aktion``: Name der Aktion. ``aufgabe``: Textstueck im Titel der
+    betroffenen Aufgabe. ``plan``: Textstuecke, die in den Planzeilen stehen
+    muessen (etwa "Fällig: Di 24.11.2026 → Fr 27.11.2026"). ``rueckfrage``:
+    Statt eines Plans fragt der Agent zurueck; das Textstueck steht in der Frage
+    (leer: irgendeine Rueckfrage genuegt).
+    """
+
+    aktion: str = ""
+    aufgabe: str = ""
+    plan: list[str] = field(default_factory=list)
+    rueckfrage: str | None = None  # None: ein Plan wird erwartet; "": irgendeine Rueckfrage
+
+    def evaluate(self, ctx: EvaluatorContext[AktionInputs, AktionOutput, Any]) -> EvaluationReason:
+        output = ctx.output
+        if self.rueckfrage is not None:
+            if output.aktion:
+                return EvaluationReason(value=False, reason=f"Plan statt Rückfrage: {' | '.join(output.plan)}")
+            fine = self.rueckfrage.casefold() in output.rueckfrage.casefold()
+            return EvaluationReason(value=fine, reason="" if fine else f"andere Rückfrage: {output.rueckfrage}")
+        if not output.aktion:
+            return EvaluationReason(value=False, reason=f"Rückfrage statt Plan: {output.rueckfrage}")
+        problems = []
+        if self.aktion and output.aktion != self.aktion:
+            problems.append(f"Aktion {output.aktion}, erwartet {self.aktion}")
+        if self.aufgabe and self.aufgabe.casefold() not in output.aufgabe.casefold():
+            problems.append(f"betrifft „{output.aufgabe}“, erwartet „{self.aufgabe}“")
+        text = "\n".join(output.plan)
+        for part in self.plan:
+            if part not in text:
+                problems.append(f"„{part}“ fehlt im Plan")
+        if problems:
+            problems.append(f"Plan: {' | '.join(output.plan)}")
+        return EvaluationReason(value=not problems, reason="; ".join(problems))
+
+
 # --- Agenten und ihre Falldateien
 
 
@@ -1011,4 +1140,5 @@ AGENTS: dict[str, Suite] = {
     search.AGENT_NAME: Suite(Dataset[SucheInputs, SucheOutput, Any], (Treffer,), suche_task, uses_model=False),
     ask.AGENT_NAME: Suite(Dataset[FragenInputs, FragenOutput, Any], (Antwort,), fragen_task),
     asana_tasks.AGENT_NAME: Suite(Dataset[AsanaInputs, AsanaOutput, Any], (Aufgabenliste,), asana_task),
+    asana_actions.AGENT_NAME: Suite(Dataset[AktionInputs, AktionOutput, Any], (Aktion,), aktion_task),
 }

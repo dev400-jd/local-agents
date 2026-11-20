@@ -1081,6 +1081,107 @@ Grenzen:
 
 Anderes Modell: `asana_aufgaben = "…"` unter `[models]` im Profil.
 
+## Asana steuern
+
+Der erste Agent, der in ein fremdes System schreibt. Er führt je Satz genau
+eine Aktion aus, nur in einem freigegebenen Projekt und nur nach deinem Ja.
+
+```bash
+.venv/bin/python -m local_agents.asana_actions "Leg die Aufgabe Folien bauen bis Freitag an"
+.venv/bin/python -m local_agents.asana_actions "Hak Folien bauen ab"
+.venv/bin/python -m local_agents.asana_actions "Verschiebe Angebot prüfen auf nächsten Dienstag"
+.venv/bin/python -m local_agents.asana_actions "Schieb Angebot prüfen nach In Arbeit"
+.venv/bin/python -m local_agents.asana_actions rueckgaengig   # die letzte Aktion zurücknehmen
+.venv/bin/python -m local_agents.asana_actions protokoll      # was der Agent geändert hat
+```
+
+```text
+Fälligkeit ändern im Projekt „Übungsprojekt“: Angebot prüfen
+  Fällig: Di 24.11.2026 → Fr 27.11.2026
+Ausführen? (j/n) j
+Erledigt und kontrolliert.
+Zurücknehmen: python -m local_agents.asana_actions rueckgaengig
+```
+
+### Freigeben
+
+Schreiben ist aus, solange im Profil kein Projekt steht:
+
+```toml
+[asana]
+write_projects = ["Übungsprojekt"]
+```
+
+Der Agent ändert dann nur Aufgaben dieses einen Projekts. Für die ersten
+Versuche gehört dort ein eigenes Übungsprojekt hin, kein Projekt, in dem
+Kollegen arbeiten. Ob automatisiertes Schreiben per Token im Workspace deines
+Arbeitgebers erlaubt ist, musst du selbst klären.
+
+### Was er kann
+
+| Aktion | Beispiel |
+|---|---|
+| Aufgabe anlegen, dir zugewiesen, auf Wunsch mit Fälligkeit und Abschnitt | „Neue Aufgabe: Reisekosten einreichen, bis 30.11., in Arbeit" |
+| Abschließen, wieder öffnen | „Hak Folien bauen ab", „… ist doch noch nicht erledigt" |
+| Fälligkeit setzen, ändern, entfernen | „Setz … auf Freitag", „Nimm bei … den Termin raus" |
+| In einen Abschnitt verschieben | „Schieb … nach In Arbeit" |
+| Umbenennen | „Benenne … in … um" |
+| Unteraufgabe anlegen, dir zugewiesen | „Füge bei … die Unteraufgabe … hinzu" |
+| Abschnitt im Projekt anlegen | „Leg den Abschnitt … an" |
+
+Statt des Namens geht auch ein Verweis auf die Aufgabe der letzten Aktion:
+„den eben angelegten Task", „die Aufgabe von gerade", „die letzte Aufgabe".
+
+In der Shell gehört der Satz in Anführungszeichen. Enthält er selbst welche,
+außen einfache nehmen (`'… in den Abschnitt "In Arbeit"'`); sonst wartet zsh
+mit `dquote>` auf das Ende des Textes (`Strg+C` bricht ab).
+
+Was es nicht gibt: Kommentare, Zuweisungen an andere, Löschen, mehrere
+Aktionen in einem Satz, „alle Aufgaben …", Änderungen an Unteraufgaben, an
+Projekten oder außerhalb des freigegebenen Projekts. Auf solche Sätze antwortet
+der Agent mit der Liste dessen, was geht.
+
+### Wie er arbeitet
+
+1. **Übersetzen (Modell):** Aus deinem Satz wird eine Aktion aus dem festen
+   Katalog. Das Modell sieht dabei deinen Satz und die Namen der Abschnitte,
+   aber keine Aufgabe, keine Beschreibung und keinen Kommentar aus Asana.
+   Damit kann Text, den jemand in Asana geschrieben hat, das Modell zu nichts
+   bringen.
+2. **Auflösen (Code):** Der Code liest das Projekt frisch aus Asana (nicht aus
+   dem Spiegel), sucht die gemeinte Aufgabe und den Abschnitt und rechnet das
+   Datum. Passt nichts oder passt mehreres, fragt er nach, statt zu raten.
+3. **Plan und Freigabe:** Du siehst, was sich ändert (alt → neu). Nur `j` oder
+   `ja` führt aus; alles andere bricht ab. Ohne Terminal wird nie ausgeführt.
+4. **Ausführen und kontrollieren (Code):** Direkt vor jeder Anfrage prüft der
+   Code noch einmal, dass sie im Katalog steht, nur Aufgaben und Abschnitte
+   des freigegebenen Projekts betrifft und niemandem außer dir etwas zuweist.
+   Diese Sperre gilt unabhängig davon, was Modell und Planung geliefert haben.
+   Danach liest er die Aufgabe zurück und vergleicht.
+5. **Protokoll:** Jede Änderung steht mit dem vorherigen Wert in der
+   Agenten-Datenbank. `rueckgaengig` nimmt die letzte zurück, wieder nach
+   Freigabe. Bei einer angelegten Aufgabe heißt Zurücknehmen: Sie wird
+   gelöscht; das ist das einzige Löschen, das es gibt, und es geht nur für
+   Aufgaben, die der Agent selbst angelegt hat.
+
+Nach einer ausgeführten Aktion wird der [Asana-Spiegel](#asana-spiegel)
+abgeglichen, damit Suche und Abfragen die Änderung kennen.
+
+Grenzen:
+
+- **Gegen das echte Asana nicht erprobt.** Alle Tests laufen gegen einen
+  Nachbau. Dass Asana die Anfragen so annimmt, zeigt erst dein erster Versuch
+  im Übungsprojekt.
+- **Was Asana von sich aus tut, sieht der Agent nicht:** Regeln im Projekt,
+  Benachrichtigungen an Mitglieder des Projekts.
+- **Zurücknehmen stellt den Wert wieder her, nicht den Zeitpunkt:** Im Verlauf
+  der Aufgabe in Asana bleiben beide Änderungen sichtbar.
+- **Eine Verschiebung aus „keinem Abschnitt" lässt sich nicht zurücknehmen.**
+- **Die Kontrolle prüft das geänderte Feld,** nicht, ob Asana nebenbei etwas
+  anderes verändert hat.
+
+Anderes Modell: `asana_aktion = "…"` unter `[models]` im Profil.
+
 ## Gesprächs-Agent
 
 Mit ihm unterhältst du dich über den Inhalt der Stories. Er liest nur; Stories
