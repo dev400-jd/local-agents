@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from local_agents.asana_source import (
+from local_agents.asana_source import (  # noqa: F401  (Transport wird von watch.py mitbenutzt)
     PAGE_SIZE,
     AsanaAccessError,
     Transport,

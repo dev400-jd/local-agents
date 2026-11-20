@@ -2,12 +2,15 @@
 
 import dataclasses
 import sqlite3
+import subprocess
 import tempfile
 import unittest
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from local_agents import watch
+from local_agents.asana_mirror import Mirror
+from local_agents.asana_source import AsanaAccessError
 from local_agents.calendar_events import CalendarAccessError, Event
 from local_agents.planner_agent import plan_events
 from local_agents.profile import Context, Profile
@@ -151,7 +154,105 @@ class TestReporter(unittest.TestCase):
         self.assertIn("übersprungen", self.log[0])
 
 
+class TestAsanaSync(unittest.TestCase):
+    def setUp(self) -> None:
+        self.time = 0.0
+        self.logged: list[str] = []
+        self.calls = 0
+        self.exists = True
+        self.fail = ""
+        self.tasks = [{"gid": "1", "name": "Angebot prüfen", "modified_at": "2026-11-19T08:00:00.000Z"}]
+        self.mirror_db = tempfile.NamedTemporaryFile(suffix=".db")
+        self.addCleanup(self.mirror_db.close)
+        self.asana = watch.AsanaSync(
+            Profile(asana_sync_minutes=30),
+            self.logged.append,
+            connect=lambda: self.transport,
+            clock=lambda: self.time,
+            now=lambda: datetime(2026, 11, 20, 12, 0, tzinfo=timezone.utc) + timedelta(seconds=self.time),
+            exists=lambda: self.exists,
+            open_mirror=lambda: Mirror(self.mirror_db.name),
+        )
+
+    def transport(self, path: str, params: dict) -> dict:
+        self.calls += 1
+        if self.fail:
+            raise AsanaAccessError(self.fail)
+        if path == "/users/me":
+            return {"data": {"gid": "111", "workspaces": [{"gid": "ws"}]}}
+        if path == "/tasks":
+            return {"data": self.tasks}
+        return {"data": []}
+
+    def at(self, moment: float) -> bool:
+        self.time = moment
+        return self.asana.tick()
+
+    def test_syncs_at_start_and_then_every_interval(self) -> None:
+        self.assertTrue(self.at(0))
+        self.assertEqual(len(self.logged), 1)
+        self.assertTrue(self.logged[0].endswith("Asana: Voller Abgleich: 1 neu, 0 geändert, 0 unverändert, 0 entfernt."))
+        self.assertFalse(self.at(1799))
+        self.assertTrue(self.at(1800))
+        self.assertEqual(len(self.logged), 1)  # nichts geaendert, nichts zu melden
+        mirror = Mirror(self.mirror_db.name)
+        self.addCleanup(mirror.close)
+        self.assertEqual([task.name for task in mirror.tasks()], ["Angebot prüfen"])
+
+    def test_no_mirror_no_sync_and_zero_switches_it_off(self) -> None:
+        self.exists = False
+        self.assertFalse(self.at(0))
+        self.assertEqual(self.calls, 0)
+        self.exists = True
+        self.asana.profile = Profile(asana_sync_minutes=0)
+        self.assertFalse(self.at(5000))
+        self.assertEqual(self.calls, 0)
+
+    def test_the_same_failure_is_logged_once(self) -> None:
+        self.fail = "Asana nicht erreichbar: kein Netz"
+        self.assertTrue(self.at(0))
+        self.assertTrue(self.at(1800))
+        self.assertEqual(len(self.logged), 1)
+        self.assertTrue(self.logged[0].endswith("Asana nicht abgeglichen: Asana nicht erreichbar: kein Netz"))
+        self.fail = ""
+        self.assertTrue(self.at(3600))
+        self.assertEqual(len(self.logged), 2)
+
+
 class TestLaunchAgent(unittest.TestCase):
+    def launchctl(self, loaded_for: int, failing: int):
+        """Nachgebautes launchctl: Der Dienst bleibt nach bootout noch ``loaded_for`` Abfragen geladen,
+        und die ersten ``failing`` Ladeversuche scheitern."""
+        state = {"loaded": loaded_for, "failing": failing}
+        calls: list[str] = []
+
+        def run(*args: str) -> subprocess.CompletedProcess:
+            calls.append(args[0])
+            code = 0
+            if args[0] == "print":
+                code = 0 if state["loaded"] > 0 else 113
+                state["loaded"] -= 1
+            elif args[0] == "bootstrap" and state["failing"] > 0:
+                state["failing"] -= 1
+                code = 5
+            return subprocess.CompletedProcess(args, code, "", "Bootstrap failed: 5: Input/output error" if code == 5 else "")
+
+        return run, calls
+
+    def test_restart_waits_until_the_old_service_is_gone(self) -> None:
+        run, calls = self.launchctl(loaded_for=2, failing=1)
+        waits: list[float] = []
+        result = watch.restart(run, "gui/501", "/tmp/x.plist", sleep=waits.append)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(calls, ["bootout", "print", "print", "print", "bootstrap", "bootstrap"])
+        self.assertEqual(waits, [0.5, 0.5, 1.0])
+
+    def test_restart_gives_up_with_the_error_of_launchd(self) -> None:
+        run, calls = self.launchctl(loaded_for=0, failing=99)
+        result = watch.restart(run, "gui/501", "/tmp/x.plist", sleep=lambda seconds: None, attempts=3)
+        self.assertEqual((result.returncode, calls.count("bootstrap")), (5, 4))
+        self.assertIn("Input/output error", result.stderr)
+
     def test_plist_runs_the_watcher_with_this_python(self) -> None:
         plist = watch.agent_plist("/pfad/.venv/bin/python", Path("/pfad"), {"LOCAL_AGENTS_DB": "/x.db", "HOME": "/h"})
         self.assertEqual(plist["Label"], "local-agents.watch")

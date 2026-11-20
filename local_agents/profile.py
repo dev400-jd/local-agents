@@ -77,6 +77,8 @@ class Profile:
     # Anrede in Nachrichtenentwuerfen (message_agent.py): "du" oder "Sie".
     message_form: str = "du"
     # Kalenderwache (watch.py): Aenderungen als macOS-Mitteilung zeigen, vorlesen.
+    # So oft gleicht die Wache den Asana-Spiegel ab (Minuten); 0 = gar nicht.
+    asana_sync_minutes: int = 30
     # Embedding-Modell der Bedeutungssuche (search.py); leer = nur Wortsuche.
     search_embeddings: str = ""
     watch_notify: bool = True
@@ -200,6 +202,12 @@ def profile_path() -> Path:
     return Path(os.environ.get("LOCAL_AGENTS_PROFILE", DEFAULT_PROFILE_PATH))
 
 
+def _minutes(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ProfileError("sync_minutes unter [asana] braucht eine ganze Zahl ab 0 (0 = aus).")
+    return value
+
+
 def load_profile(path: Path | None = None) -> Profile:
     """Laedt das Profil; ohne Datei gibt es ein leeres Profil."""
     path = path or profile_path()
@@ -282,6 +290,7 @@ def load_profile(path: Path | None = None) -> Profile:
         telegram_ask_at=tuple(f"{int(c.split(':')[0]):02d}:{c.split(':')[1]}" for c in ask_at),
         plan_skip=tuple(word.casefold() for word in planning.get("skip", [])),
         sync_enabled=bool(planning.get("sync", True)),
+        asana_sync_minutes=_minutes(data.get("asana", {}).get("sync_minutes", 30)),
         search_embeddings=str(data.get("search", {}).get("embeddings", "")).strip(),
         watch_notify=bool(data.get("watch", {}).get("notify", True)),
         watch_speak=bool(data.get("watch", {}).get("speak", False)),

@@ -12,7 +12,12 @@ Wache wartet danach einige Sekunden, bis Ruhe ist, und ruft den Abgleich aus
 falls eine Meldung verloren ging (etwa im Ruhezustand). Ein Modell braucht sie
 nicht.
 
-Hat sich etwas geaendert, erscheint eine macOS-Mitteilung; mit ``speak = true``
+Nebenbei haelt die Wache den Asana-Spiegel aktuell (asana_mirror.py): alle 30
+Minuten, wenn es den Spiegel schon gibt. Einstellen oder abschalten mit
+``sync_minutes`` unter ``[asana]`` im Profil (0 = aus). Das steht nur im
+Protokoll, eine Mitteilung gibt es dafuer nicht.
+
+Hat sich im Kalender etwas geaendert, erscheint eine macOS-Mitteilung; mit ``speak = true``
 unter ``[watch]`` im Profil wird sie auch vorgelesen. Alles bleibt auf dem Rechner.
 
 Der Hintergrunddienst ist ein LaunchAgent des angemeldeten Nutzers: Er startet
@@ -29,7 +34,8 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
-from local_agents import sync, voice
+from local_agents import asana_mirror, sync, voice
+from local_agents.asana_source import AsanaAccessError, asana_token, http_transport
 from local_agents.calendar_events import CalendarAccessError, pump, watch_changes
 from local_agents.profile import Profile, ProfileError, load_profile
 from local_agents.store import Store
@@ -43,7 +49,7 @@ QUIET_SECONDS = 5.0
 # Abgleich ohne Meldung, als Netz fuer verlorene Meldungen.
 FALLBACK_SECONDS = 30 * 60.0
 # Durchgereichte Umgebungsvariablen (abweichende Pfade fuer Profil, Datenbank, Stimmen).
-ENVIRONMENT = ("LOCAL_AGENTS_PROFILE", "LOCAL_AGENTS_DB", "LOCAL_AGENTS_VOICES")
+ENVIRONMENT = ("LOCAL_AGENTS_PROFILE", "LOCAL_AGENTS_DB", "LOCAL_AGENTS_VOICES", "LOCAL_AGENTS_ASANA_DB")
 
 
 class Watcher:
@@ -79,6 +85,57 @@ class Watcher:
         self.changed_at = None
         self.synced_at = now
         self.run()
+        return True
+
+
+class AsanaSync:
+    """Gleicht den Asana-Spiegel in festen Abstaenden ab (``sync_minutes`` unter ``[asana]``).
+
+    Nur wenn es den Spiegel schon gibt: Wer ihn nie angelegt hat, bekommt auch
+    im Hintergrund keinen. Geschrieben wird nach Asana nichts.
+    """
+
+    def __init__(
+        self,
+        profile: Profile,
+        log: Callable[[str], None],
+        connect: Callable[[], asana_mirror.Transport] = lambda: http_transport(asana_token()),
+        clock: Callable[[], float] = time.monotonic,
+        now: Callable[[], datetime] = lambda: datetime.now().astimezone(),
+        exists: Callable[[], bool] = lambda: asana_mirror.mirror_path().is_file(),
+        open_mirror: Callable[[], asana_mirror.Mirror] = asana_mirror.Mirror,
+    ) -> None:
+        self.profile = profile
+        self.log = log
+        self.connect, self.clock, self.now, self.exists, self.open_mirror = connect, clock, now, exists, open_mirror
+        self.synced_at: float | None = None
+        self.last_error = ""
+
+    def tick(self) -> bool:
+        """Gleicht ab, wenn es an der Zeit ist; True, wenn ein Abgleich versucht wurde."""
+        minutes = self.profile.asana_sync_minutes
+        moment = self.clock()
+        if minutes <= 0 or (self.synced_at is not None and moment - self.synced_at < minutes * 60):
+            return False
+        self.synced_at = moment
+        if not self.exists():
+            return False
+        stamp = f"{datetime.now():%d.%m. %H:%M}"
+        try:
+            mirror = self.open_mirror()
+            try:
+                result = asana_mirror.sync(mirror, self.connect(), self.now())
+            finally:
+                mirror.close()
+        except (AsanaAccessError, sqlite3.Error) as exc:
+            # Dieselbe Stoerung (kein Netz, Token abgelaufen) nicht alle paar Minuten wiederholen.
+            if str(exc) != self.last_error:
+                self.log(f"{stamp} Asana nicht abgeglichen: {exc}")
+            self.last_error = str(exc)
+            return True
+        self.last_error = ""
+        if result.new or result.changed or result.removed:
+            self.log(f"{stamp} Asana: {asana_mirror.result_line(result)}")
         return True
 
 
@@ -182,10 +239,11 @@ def serve(profile: Profile) -> int:
         log("Der Abgleich ist im Profil abgeschaltet (sync = false unter [planning]). Wache beendet.")
         return 0
     reporter = Reporter(profile, log=log)
+    asana = AsanaSync(profile, log)
 
     def run() -> None:
         try:  # Aenderungen am Profil gelten ohne Neustart
-            reporter.profile = load_profile()
+            reporter.profile = asana.profile = load_profile()
         except ProfileError as exc:
             log(f"Profil nicht lesbar, es gilt der letzte Stand: {exc}")
         reporter()
@@ -202,6 +260,7 @@ def serve(profile: Profile) -> int:
         while True:
             pump(1.0)
             watcher.tick()
+            asana.tick()
     except KeyboardInterrupt:
         return 0
     finally:
@@ -238,13 +297,40 @@ def _target() -> str:
     return f"gui/{os.getuid()}"
 
 
+def restart(
+    launchctl: Callable[..., subprocess.CompletedProcess],
+    target: str,
+    plist: str,
+    sleep: Callable[[float], None] = time.sleep,
+    attempts: int = 10,
+) -> subprocess.CompletedProcess:
+    """Entlaedt den Dienst, falls er laeuft, und laedt ihn neu.
+
+    launchd entlaedt nicht sofort: Ein ``bootstrap`` direkt nach dem ``bootout``
+    scheitert mit "Input/output error". Deshalb erst warten, bis der Dienst weg
+    ist, und das Laden bei einem Fehlschlag wiederholen.
+    """
+    service = f"{target}/{LABEL}"
+    launchctl("bootout", service)
+    for _ in range(attempts):
+        if launchctl("print", service).returncode != 0:
+            break
+        sleep(0.5)
+    result = launchctl("bootstrap", target, plist)
+    for _ in range(attempts):
+        if result.returncode == 0:
+            break
+        sleep(1.0)
+        result = launchctl("bootstrap", target, plist)
+    return result
+
+
 def install() -> int:
     folder = Path(__file__).resolve().parent.parent
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
     PLIST_PATH.write_bytes(plistlib.dumps(agent_plist(sys.executable, folder, dict(os.environ))))
-    _launchctl("bootout", f"{_target()}/{LABEL}")  # falls er schon laeuft
-    result = _launchctl("bootstrap", _target(), str(PLIST_PATH))
+    result = restart(_launchctl, _target(), str(PLIST_PATH))
     if result.returncode != 0:
         print(f"launchd hat den Dienst nicht angenommen: {result.stderr.strip()}", file=sys.stderr)
         return 1

@@ -65,6 +65,11 @@ sync = true
 notify = true    # macOS-Mitteilung
 speak = false    # zusaetzlich vorlesen
 
+# Asana-Spiegel (python -m local_agents.asana_mirror): Die Wache gleicht ihn im
+# Hintergrund ab, sobald es ihn gibt. 0 = nur von Hand.
+[asana]
+sync_minutes = 30
+
 # Suche (python -m local_agents.search): Mit einem Embedding-Modell findet sie
 # auch nach Bedeutung, nicht nur nach Worten. Vorher: ollama pull bge-m3
 # [search]

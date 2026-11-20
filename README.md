@@ -582,8 +582,26 @@ notify = true    # macOS-Mitteilung
 speak = false    # zusätzlich vorlesen (Stimme aus [voice])
 ```
 
+Nebenbei hält die Wache den [Asana-Spiegel](#asana-spiegel) aktuell: beim
+Start und danach alle 30 Minuten, sobald es den Spiegel gibt. Das steht nur im
+Protokoll (`Asana: Abgleich: 2 neu, 1 geändert.`), eine Mitteilung gibt es
+dafür nicht. Einstellen im Profil, gilt ohne Neustart:
+
+```toml
+[asana]
+sync_minutes = 30    # 0 = nur von Hand
+```
+
 Was dabei zu beachten ist:
 
+- **Nach einem Update des Codes** einmal neu `einrichten`: Der laufende Dienst
+  arbeitet sonst mit dem alten Stand weiter.
+- **Asana-Token im Hintergrund:** Der Dienst liest das Token aus dem
+  Schlüsselbund. Ob macOS dabei einmal nachfragt, ist nicht erprobt; scheitert
+  es, steht `Asana nicht abgeglichen: …` im Protokoll.
+- **Ohne Kalenderwache kein Asana-Abgleich:** Ist der Kalenderabgleich
+  abgeschaltet oder fehlt die Kalenderfreigabe, beendet sich die Wache, und
+  der Spiegel wird nur von Hand aktualisiert.
 - **Kalenderfreigabe:** Der Dienst läuft nicht im Terminal, deshalb braucht
   Python eine eigene Freigabe. macOS fragt beim ersten Start danach; zu sehen
   unter Systemeinstellungen → Datenschutz & Sicherheit → Kalender. Fehlt sie,
@@ -978,8 +996,9 @@ Geschrieben wird nach Asana nichts. Das Modul kennt nur lesende Abfragen.
 
 Grenzen:
 
-- **So aktuell wie der letzte Abgleich.** Er läuft nur, wenn du ihn aufrufst;
-  `status` zeigt das Alter.
+- **So aktuell wie der letzte Abgleich.** Die
+  [Kalenderwache](#kalenderwache-abgleich-im-hintergrund) gleicht alle 30
+  Minuten ab, wenn sie läuft; sonst nur auf Aufruf. `status` zeigt das Alter.
 - **Neue Kommentare kommen mit dem kurzen Abgleich womöglich nicht an.** Ob
   ein Kommentar das Änderungsdatum einer Aufgabe verschiebt, lässt Asana
   offen. Der volle Abgleich liest deshalb die Kommentare aller offenen
@@ -1048,7 +1067,8 @@ letzte oder nächste N Tage oder Wochen, seit …, ab …, bis …, überfällig
 
 Grenzen:
 
-- **So aktuell wie der Spiegel.** Vor wichtigen Fragen abgleichen.
+- **So aktuell wie der Spiegel:** mit laufender Kalenderwache höchstens 30
+  Minuten alt, sonst so alt wie dein letzter Aufruf.
 - **Ein Filter, keine Auswertung.** „Welches Projekt hat die meisten offenen
   Aufgaben?" oder „was ist am dringendsten?" geht damit nicht.
 - **„Geändert" heißt:** Änderungsdatum der Aufgabe oder letzter Kommentar, was
