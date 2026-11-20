@@ -54,6 +54,7 @@ DEFAULT_PRIVATE_DIR = Path.home() / ".local" / "share" / "local-agents" / "evals
 RESULTS_NAME = "ergebnisse.jsonl"
 # Drei Laeufe verdecken Schwankungen, die fuenf zeigen (README, Abschnitt "Stand").
 DEFAULT_RUNS = 5
+NO_MODEL = "ohne Modell"
 MAX_SHOWN_FAILURES = 3
 # Fehlermeldungen, die einen Ausfall des Modellservers anzeigen (abgestuerzt,
 # nicht erreichbar, Zeitlimit), nicht eine falsche Antwort des Modells.
@@ -249,7 +250,9 @@ def compare(previous: dict | None, results: list[CaseResult]) -> list[str]:
 def report(agent: str, model_name: str, results: list[CaseResult], state: str) -> list[str]:
     runs = results[0].runs if results else 0
     lines = [
-        f"{agent} · {model_name} · Ausgabe {OUTPUT_MODE} · {runs} Läufe je Fall · Stand {state or 'unbekannt'}"
+        f"{agent} · {model_name} · "
+        + ("" if model_name == NO_MODEL else f"Ausgabe {OUTPUT_MODE} · ")
+        + f"{runs} {'Lauf' if runs == 1 else 'Läufe'} je Fall · Stand {state or 'unbekannt'}"
     ]
     for result in results:
         seconds = result.seconds / result.runs if result.runs else 0.0
@@ -346,13 +349,15 @@ def main(argv: list[str]) -> int:
             for case in selected:
                 print(f"  {case.name}")
             continue
+        uses_model = AGENTS[agent].uses_model
         name = options["--modell"] or profile.model_for(agent)
         results = evaluate(
             agent,
             selected,
-            ollama_model(name),
-            name or MODEL_NAME,
-            int(options["--laeufe"]),
+            ollama_model(name) if uses_model else None,
+            (name or MODEL_NAME) if uses_model else NO_MODEL,
+            # Ohne Modell kommt jedes Mal dasselbe heraus.
+            int(options["--laeufe"]) if uses_model else 1,
             # Ein Teil-Lauf wuerde den Vergleich verfaelschen, also nicht festhalten.
             None if word else private_dir() / RESULTS_NAME,
             state=code_state(),

@@ -153,4 +153,6 @@ kann Eingabe unbemerkt abgeschnitten werden.
 - Nicht gemessen werden die Ergebnisliste des Termin-Agenten (nur ihre Länge),
   die freien Texte von Kalender- und Asana-Agent, der Planungs-Agent und die
   Spracheingabe.
-- Kontextfenster von Ollama prüfen und auf 16K stellen.
+- Kontextfenster: Der Befehl `context_window` zeigt den Stand und legt eine
+  Variante mit 16K an (README, Abschnitt „Kontextfenster"). Die Messungen oben
+  liefen noch mit dem kleineren Fenster.

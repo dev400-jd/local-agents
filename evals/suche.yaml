@@ -1,0 +1,117 @@
+# yaml-language-server: $schema=suche_schema.json
+# Erfundene Fälle für die Suche: Steht der richtige Eintrag vorn? Gemessen wird
+# ohne Modell, also ein Lauf je Fall. Die Dokumente liegen in evals/suche_vault.
+# Aufbau: README, Abschnitt "Messen".
+# Die letzten drei Fälle zeigen, was die reine Wortsuche nicht kann (Bedeutung,
+# Wortteile). Sie scheitern mit Absicht und sind der Maßstab für die
+# Bedeutungssuche.
+name: suche
+cases:
+- name: "Stichworte aus dem Titel"
+  inputs:
+    frage: "Wochenbericht Regelverstöße"
+    ordner: &vault "evals/suche_vault"
+    bemerkungen: &bemerkungen
+    - {story: "AN-2: Schnittstelle für große Lieferanten", text: "Die Abstimmung mit dem ersten Großlieferanten ist auf nächste Woche verschoben."}
+    - {story: "QG-3: Quarantäne für abgewiesene Lieferungen", text: "Aufbewahrungsfrist ist mit dem Datenschutz noch nicht geklärt."}
+    - {text: "Im Daily ansprechen, dass die Testumgebung seit Montag nicht erreichbar ist."}
+  evaluators:
+  - Treffer: {zuerst: "QG-2"}
+- name: "Ganze Frage mit Füllwörtern"
+  inputs:
+    frage: "Wie lange bleiben abgewiesene Datensätze in der Quarantäne erhalten?"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Treffer: {zuerst: "QG-3"}
+- name: "Andere Endung als im Text"
+  inputs:
+    frage: "Schwellenwert für Ausreißer bei Preisen"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Treffer: {zuerst: "QG-4"}
+- name: "Story-Kürzel holt Story und Bemerkung"
+  inputs:
+    frage: "Was ist mit AN-2?"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Treffer: {zuerst: "AN-2: Schnittstelle", erwartet: ["Bemerkung zu AN-2"], unter_den_ersten: 2}
+- name: "Kürzel klein geschrieben"
+  inputs:
+    frage: "qg-1"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Treffer: {zuerst: "QG-1"}
+- name: "Bemerkung wird gefunden"
+  inputs:
+    frage: "Aufbewahrungsfrist Datenschutz"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Treffer: {erwartet: ["Bemerkung zu QG-3"], unter_den_ersten: 2}
+- name: "Bemerkung ohne Story"
+  inputs:
+    frage: "Testumgebung nicht erreichbar"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Treffer: {zuerst: "Bemerkung ohne Story"}
+- name: "Abschnitt, der keine Story ist"
+  inputs:
+    frage: "Welche Architekturentscheidung gibt es zum Dateitransfer?"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Treffer: {erwartet: ["Architekturentscheidung"], unter_den_ersten: 2}
+- name: "Frage über zwei Dateien"
+  inputs:
+    frage: "Wovon hängt die Schnittstelle für große Lieferanten ab?"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Treffer: {zuerst: "AN-2"}
+- name: "Umlaut weggelassen"
+  inputs:
+    frage: "Uberwachung der Einlieferungen"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Treffer: {zuerst: "AN-4"}
+- name: "Nichts Passendes: kein Treffer"
+  inputs:
+    frage: "Urlaubsplanung Weihnachtsfeier"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Treffer: {leer: true}
+- name: "Nur Füllwörter: kein Treffer"
+  inputs:
+    frage: "Was ist das und wie ist es?"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Treffer: {leer: true}
+- name: "Grenze der Wortsuche: anderes Wort, gleiche Bedeutung"
+  inputs:
+    frage: "Wer darf sich einloggen und wie werden Konten gesperrt?"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Treffer: {zuerst: "AN-3"}
+- name: "Grenze der Wortsuche: Wortteil mitten im Wort"
+  inputs:
+    frage: "Frist"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Treffer: {erwartet: ["QG-3"], unter_den_ersten: 2}
+- name: "Grenze der Wortsuche: umschriebene Frage"
+  inputs:
+    frage: "Wie merken wir, wenn ein Partner nichts schickt?"
+    ordner: *vault
+    bemerkungen: *bemerkungen
+  evaluators:
+  - Treffer: {zuerst: "AN-4"}

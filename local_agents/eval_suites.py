@@ -26,10 +26,10 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_evals import Dataset
 from pydantic_evals.evaluators import EvaluationReason, Evaluator, EvaluatorContext
 
-from local_agents import feedback, meeting_agent, message_agent, scrum_master, status_agent, stories
+from local_agents import feedback, meeting_agent, message_agent, scrum_master, search, status_agent, stories
 from local_agents.checks import invented_numbers
 from local_agents.meeting_types import BY_ID
-from local_agents.profile import CUSTOMER, INTERNAL, Context, Profile
+from local_agents.profile import CUSTOMER, INTERNAL, Context, Profile, load_profile
 from local_agents.store import IN_PROGRESS, NOTE_OPEN, NOTE_REMOVED, OPEN, REJECTED, Store, StoredEvent
 from local_agents.stories import STORY_HEADING, Story, load_features
 
@@ -655,6 +655,91 @@ class Nachricht(Evaluator[NachrichtInputs, NachrichtOutput, Any]):
         return EvaluationReason(value=not problems, reason="; ".join(problems))
 
 
+# --- Suche (ohne Modell)
+
+
+class SucheBemerkung(Strict):
+    """Eine Bemerkung aus dem Scrum Master, die durchsuchbar sein soll."""
+
+    text: str
+    story: str = ""
+
+
+class SucheInputs(Strict):
+    frage: str
+    # Ordner mit Markdown-Dateien, relativ zum Repo. Leer: der echte Bestand
+    # (Profil und Agenten-Datenbank), fuer Faelle aus dem Alltag.
+    ordner: str = ""
+    bemerkungen: list[SucheBemerkung] = []
+    treffer: int = search.DEFAULT_LIMIT  # so viele Treffer werden geholt
+
+
+class SucheOutput(BaseModel):
+    titel: list[str]  # Titel der Treffer, der beste zuerst
+    modell: str = ""  # bleibt leer: Die Suche fragt kein Modell
+
+
+def suche_task(model: object) -> Callable[[SucheInputs], SucheOutput]:
+    """Die Aufgabe fuer pydantic-evals: Index aufbauen, suchen, Titel der Treffer zurueckgeben."""
+
+    def run(inputs: SucheInputs) -> SucheOutput:
+        index = search.Index(":memory:")
+        try:
+            if inputs.ordner:
+                store = Store(":memory:")
+                for remark in inputs.bemerkungen:
+                    store.add_story_note(remark.story, "", remark.text)
+                passages = search.story_passages("Beispiel", REPO_ROOT / inputs.ordner)
+                passages += search.store_passages(store, Profile())
+            else:
+                store = Store()
+                passages = search.collect(load_profile(), store)
+            store.close()
+            index.update(passages)
+            hits = index.search(inputs.frage, inputs.treffer)
+            return SucheOutput(titel=[hit.passage.title for hit in hits])
+        finally:
+            index.close()
+
+    return run
+
+
+@dataclass
+class Treffer(Evaluator[SucheInputs, SucheOutput, Any]):
+    """Prueft die Rangfolge der Suche an den Titeln der Treffer.
+
+    ``erwartet``: Jedes dieser Textstuecke muss im Titel eines Treffers unter
+    den ersten ``unter_den_ersten`` stehen. ``zuerst``: steht im Titel des
+    besten Treffers. ``nicht``: steht in keinem Titel. ``leer``: Es darf keinen
+    Treffer geben.
+    """
+
+    erwartet: list[str] = field(default_factory=list)
+    unter_den_ersten: int = 3
+    zuerst: str = ""
+    nicht: list[str] = field(default_factory=list)
+    leer: bool = False
+
+    def evaluate(self, ctx: EvaluatorContext[SucheInputs, SucheOutput, Any]) -> EvaluationReason:
+        titles = ctx.output.titel
+        top = [title.casefold() for title in titles[: self.unter_den_ersten]]
+        problems = []
+        if self.leer and titles:
+            problems.append("es sollte keinen Treffer geben")
+        for part in self.erwartet:
+            if not any(part.casefold() in title for title in top):
+                problems.append(f"„{part}“ nicht unter den ersten {self.unter_den_ersten}")
+        if self.zuerst and (not titles or self.zuerst.casefold() not in titles[0].casefold()):
+            problems.append(f"„{self.zuerst}“ ist nicht der beste Treffer")
+        for part in self.nicht:
+            if any(part.casefold() in title.casefold() for title in titles):
+                problems.append(f"„{part}“ gehört nicht zu den Treffern")
+        if problems:
+            found = "; ".join(f"{rank}. {title}" for rank, title in enumerate(titles, start=1)) or "nichts"
+            problems.append(f"gefunden: {found}")
+        return EvaluationReason(value=not problems, reason="; ".join(problems))
+
+
 # --- Agenten und ihre Falldateien
 
 
@@ -666,6 +751,7 @@ class Suite:
     evaluators: tuple[type, ...]
     task: Callable[[object], Callable]  # Modell -> Aufgabe fuer pydantic-evals
     timeout: float = TASK_TIMEOUT  # Sekunden je Lauf
+    uses_model: bool = True  # False: rechnet ohne Modell, ein Lauf je Fall genuegt
 
 
 AGENTS: dict[str, Suite] = {
@@ -676,4 +762,5 @@ AGENTS: dict[str, Suite] = {
     meeting_agent.AGENT_NAME: Suite(Dataset[TerminInputs, TerminOutput, Any], (Terminart,), termin_task, timeout=300.0),
     stories.AGENT_NAME: Suite(Dataset[StoriesInputs, StoriesOutput, Any], (Stories,), stories_task),
     message_agent.AGENT_NAME: Suite(Dataset[NachrichtInputs, NachrichtOutput, Any], (Nachricht,), nachricht_task),
+    search.AGENT_NAME: Suite(Dataset[SucheInputs, SucheOutput, Any], (Treffer,), suche_task, uses_model=False),
 }

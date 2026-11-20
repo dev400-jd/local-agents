@@ -148,6 +148,19 @@ class TestOtherAgents(CaptureCase):
         with self.assertRaises(capture.CaptureError):
             capture.stories_case(NOW, str(self.folder / "fehlt.md"))
 
+    def test_search_question_expects_the_current_best_hit(self) -> None:
+        with tempfile.TemporaryDirectory() as vault:
+            Path(vault, "feature.md").write_text("# Titel\n\n## QG-1: Prüfregeln\n\nRegeln für Lieferdaten.\n", encoding="utf-8")
+            profile = Profile(contexts=(Context("kunde-acme", "kunde", "Kunde ACME", stories_dir=vault),))
+            case = capture.suche_case(self.store, profile, NOW, "Lieferdaten")
+            nothing = capture.suche_case(self.store, profile, NOW, "Weihnachtsfeier")
+        self.assertEqual(case["inputs"], {"frage": "Lieferdaten"})
+        self.assertEqual(case["evaluators"], [{"Treffer": {"zuerst": "QG-1: Prüfregeln (Titel)"}}])
+        self.assertEqual(nothing["evaluators"], [{"Treffer": {"leer": True}}])
+        self.assertEqual(len(self.saved("suche", case)), 1)
+        with self.assertRaises(capture.CaptureError):
+            capture.suche_case(self.store, profile, NOW, " ")
+
 
 class TestAppend(CaptureCase):
     def test_second_case_is_appended_and_a_broken_one_leaves_the_file_untouched(self) -> None:

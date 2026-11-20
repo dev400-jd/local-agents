@@ -440,9 +440,21 @@ cases:
 class TestCaseFiles(unittest.TestCase):
     def test_repo_cases_load_and_cover_both_agents(self) -> None:
         cases = evals.load_cases([evals.REPO_CASES])
-        self.assertEqual(sorted(cases), ["nachricht", "rueckmeldung", "scrum_master", "status", "stories", "termin"])
+        self.assertEqual(
+            sorted(cases), ["nachricht", "rueckmeldung", "scrum_master", "status", "stories", "suche", "termin"]
+        )
         self.assertGreaterEqual(len(cases["scrum_master"]), 15)
         self.assertGreaterEqual(len(cases["rueckmeldung"]), 12)
+
+    def test_search_cases_pass_except_the_known_limits_of_word_search(self) -> None:
+        # Die Suche rechnet ohne Modell, also laeuft ihre Messung auch hier mit.
+        cases = evals.load_cases([evals.REPO_CASES])["suche"]
+        lines: list[str] = []
+        results = evals.evaluate("suche", cases, None, evals.NO_MODEL, 1, None, out=lines.append)
+        self.assertTrue(lines[0].startswith("suche · ohne Modell · 1 Lauf je Fall"), lines[0])
+        failed = [result.name for result in results if result.passed < result.runs]
+        self.assertEqual(len(failed), 3, lines)
+        self.assertTrue(all(name.startswith("Grenze der Wortsuche") for name in failed), failed)
 
     def test_schema_files_in_the_repo_are_current(self) -> None:
         for agent in evals.AGENTS:

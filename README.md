@@ -103,13 +103,8 @@ Laufen ohne Ollama; ein geskriptetes Modell ersetzt das lokale Modell.
 
 ## Agent ausführen
 
-Ollama muss mit 16K Kontext laufen, sonst gelten stillschweigend 4096 Tokens:
-
-```bash
-OLLAMA_CONTEXT_LENGTH=16384 ollama serve
-```
-
-Dann in einem zweiten Terminal:
+Ollama muss das Modell mit 16K Kontext laden, siehe
+[Kontextfenster](#kontextfenster). Dann:
 
 ```bash
 .venv/bin/python -m local_agents "Was steht in der README.md?" .
@@ -821,6 +816,68 @@ der Termin nach dem Entwurf umbenannt oder verschoben, bleibt der alte Entwurf
 gespeichert; `--neu` schreibt ihn neu. Eine gemerkte Vorgabe gilt für alle
 Nachrichten, auch wenn sie nur für einen Empfänger gemeint war.
 
+## Suche
+
+Eine lokale Suche über das eigene Material, ohne Modell. Sie ist der Unterbau
+für Agenten, die Inhalte brauchen: Der Code holt die passenden Einträge, das
+Modell bekommt nur diese.
+
+```bash
+.venv/bin/python -m local_agents.search "Aufbewahrungsfrist Quarantäne"
+.venv/bin/python -m local_agents.search -n 10 "Was ist mit QG-3?"   # mehr Treffer (Standard 5)
+.venv/bin/python -m local_agents.search index                        # Index abgleichen, Bestand zeigen
+```
+
+```text
+1. Bemerkung zu QG-3: Quarantäne für abgewiesene Lieferungen
+   Bemerkung · Scrum Master, 2026-11-19
+   Aufbewahrungsfrist ist mit dem Datenschutz noch nicht geklärt.
+2. QG-3: Quarantäne für abgewiesene Lieferungen (Datenqualität im Wareneingang)
+   Story · Kunde ACME · datenqualitaet.md
+   … der Korrektur lassen sie sich erneut einspielen. ### Technische Hinweise Die Quarantäne liegt in einem eigenen Schema; die Aufbewahrungsfrist ist ein Parameter des nächtlichen Aufräumlaufs.
+```
+
+Durchsucht werden:
+
+| Quelle | Ein Eintrag je |
+|---|---|
+| Story-Dateien der Kontexte mit `stories_dir` | Story und sonstigem Abschnitt (Ziel, Architektur …) |
+| Bemerkungen aus dem Scrum Master | Bemerkung, ohne die entfernten |
+| Einordnungen des Termin-Agenten | Termin |
+| Nachrichten-Agent | übernommener Nachricht |
+
+Einträge über 2400 Zeichen werden an Absätzen geteilt („Teil 1 von 3"), damit
+ein Treffer in den Auftrag eines Agenten passt. Asana und der Kalender sind
+nicht im Index.
+
+Der Index ist eine eigene Datei neben der Agenten-Datenbank
+(`~/.local/share/local-agents/search.db`, anderer Ort:
+`LOCAL_AGENTS_SEARCH_DB`). Er ist abgeleitet: Löschen schadet nicht, der
+nächste Aufruf baut ihn neu. Vor jeder Suche wird er abgeglichen, und
+geschrieben wird nur, was sich geändert hat. Er enthält die Texte der Stories
+im Klartext und gehört wie die Datenbank nicht ins Repo.
+
+Gesucht wird nach Worten (Volltextsuche von SQLite, Rangfolge BM25; ein Treffer
+im Titel zählt vierfach):
+
+- Groß- und Kleinschreibung und Umlaute spielen keine Rolle („Uberwachung"
+  findet „Überwachung"; „Ueberwachung" nicht).
+- Endungen zählen nicht: „Schnittstellen" findet „Schnittstelle".
+- Füllwörter der Frage werden übergangen, die übrigen Worte mit ODER
+  verbunden. Wer mehr und seltenere Worte trifft, steht weiter vorn.
+- Ein Story-Kürzel in der Frage („QG-3") holt diese Story und ihre
+  Bemerkungen nach vorn, auch wenn sonst kein Wort passt.
+
+Was die Wortsuche nicht kann, steht als Messfall fest (siehe [Messen](#messen)):
+
+- **Bedeutung:** „einloggen" findet nicht „Zugangsverwaltung".
+- **Wortteile:** „Frist" findet nicht „Aufbewahrungsfrist".
+- **Umschreibungen:** „wenn ein Partner nichts schickt" findet die Story zur
+  Überwachung der Einlieferungen nicht an erster Stelle.
+
+Ob eine Bedeutungssuche (Embeddings) diese Fälle löst, ohne die anderen zu
+verschlechtern, entscheidet die Messung.
+
 ## User Stories als Markdown
 
 Die Wissensbasis für die inhaltliche Vorbereitung (zuerst das Daily) sind die
@@ -1226,6 +1283,47 @@ Die Schwellen stehen in `BLOCK_RULES`, `MAX_GAP` und `LARGE_ROUND` in
 Von den Beteiligten liest der Agent nur die Mail-Domains, keine Namen. Ein
 neuer Kunde ist ein weiterer `[[contexts]]`-Block im Profil.
 
+## Kontextfenster
+
+Die Agenten rechnen mit 16K Tokens Kontext. Ollama lädt ein Modell aber mit
+einem Fenster, das es selbst aus dem freien Speicher ableitet; gemessen wurden
+4096 und rund 8000 Tokens. Was darüber hinausgeht, schneidet Ollama
+stillschweigend ab: Der Agent antwortet dann auf einen Auftrag, dem das Ende
+fehlt, ohne dass ein Fehler erscheint.
+
+```bash
+.venv/bin/python -m local_agents.context_window                      # Stand je Modell aus dem Profil
+.venv/bin/python -m local_agents.context_window einrichten           # Variante des Standardmodells mit 16K
+.venv/bin/python -m local_agents.context_window einrichten <modell>  # Variante eines bestimmten Modells
+.venv/bin/python -m local_agents.context_window entfernen <variante>
+```
+
+```text
+! gpt-oss:20b (Standard): Kontext nicht festgelegt, Ollama wählt selbst (weniger als 16384 gemessen)
+✓ gpt-oss:20b-ctx16k (Standard): Kontext fest auf 16384 Tokens
+```
+
+Es gibt zwei Wege zu 16K:
+
+- **Je Modell (empfohlen):** `einrichten` legt eine Variante an, in der das
+  Fenster feststeht, etwa `gpt-oss:20b-ctx16k`. Sie teilt sich die Gewichte
+  mit dem Original und belegt keinen weiteren Plattenplatz. Benutzt wird sie,
+  sobald sie im Profil unter `[models]` steht; der Befehl nennt die Zeilen.
+  So bekommt nur das Modell das größere Fenster, das es verträgt.
+- **Für alle Modelle:** Ollama mit `OLLAMA_CONTEXT_LENGTH=16384` starten. Das
+  gilt dann auch für große Modelle, die schon ohne das an der Speichergrenze
+  laufen.
+
+Je Anfrage lässt sich das Fenster nicht setzen: Die OpenAI-kompatible
+Schnittstelle, über die die Agenten mit Ollama sprechen, übergeht die Angabe
+(geprüft mit Ollama 0.40), und ein Modell, das über die andere Schnittstelle
+mit 16K geladen wurde, lädt Ollama bei der nächsten Anfrage wieder mit dem
+eigenen Wert.
+
+Ein größeres Fenster braucht mehr Speicher. Bei `gpt-oss:20b` blieb die
+Anzeige von `ollama ps` bei 12 GB; für `qwen3.8:27b-mlx`, das auf einem Rechner
+mit 24 GB schon zweimal am Speicher gescheitert ist, ist es nicht erprobt.
+
 ## Modell-Einstellungen
 
 Alle Agenten laufen mit niedrigem Reasoning-Aufwand (`MODEL_SETTINGS` in
@@ -1348,6 +1446,12 @@ Beide werden gelesen; der Dateiname beginnt mit dem Namen des Agenten
   echte Fälle aus dem Alltag. Sie enthalten Story-Inhalte und Termintitel und
   bleiben deshalb außerhalb des Repos.
 
+Die Suche (`suche.yaml`) wird ohne Modell gemessen, also mit einem Lauf je
+Fall und in Sekundenbruchteilen; ihre Fälle laufen auch in den Tests mit. Die
+Beispieldokumente dazu liegen in `evals/suche_vault/`. Drei Fälle, deren Name
+mit „Grenze der Wortsuche" beginnt, scheitern mit Absicht: Sie halten fest, was
+eine Bedeutungssuche besser machen müsste.
+
 Geht im Alltag etwas schief, wird daraus zuerst ein Fall und dann die
 Korrektur. So wächst die Sammlung an den Stellen, an denen das Modell wirklich
 Fehler macht.
@@ -1465,6 +1569,7 @@ legt einen solchen Fall im privaten Ordner ab, in `<agent>-alltag.yaml`:
 .venv/bin/python -m local_agents.evals merke termin 12                 # der Termin hinter Aufgabe #12
 .venv/bin/python -m local_agents.evals merke stories ~/pfad/feature.md # eine Datei mit Stories
 .venv/bin/python -m local_agents.evals merke nachricht 18              # die Verschiebe-Aufgabe #18 mit ihrem Termin
+.venv/bin/python -m local_agents.evals merke suche "Frage"             # eine Suchanfrage gegen deinen echten Bestand
 ```
 
 Als Erwartung steht im Fall zunächst, was der Agent tatsächlich getan hat

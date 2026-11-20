@@ -8,6 +8,7 @@ Aufruf:
   python -m local_agents.evals merke termin 12                 der Termin hinter Aufgabe #12
   python -m local_agents.evals merke stories datei.md          eine Markdown-Datei mit Stories
   python -m local_agents.evals merke nachricht 18              die Verschiebe-Aufgabe #18 mit ihrem Termin
+  python -m local_agents.evals merke suche "Frage"             eine Suchanfrage gegen deinen echten Bestand
 
 Der Fall landet in ``<agent>-alltag.yaml`` im privaten Ordner der Messung
 (ausserhalb des Repos, weil er Termintitel und Story-Inhalte enthaelt). Als
@@ -22,7 +23,7 @@ from pathlib import Path
 
 import yaml
 
-from local_agents import evals, status_agent
+from local_agents import evals, search, status_agent
 from local_agents.eval_suites import AGENTS, _key
 from local_agents.meeting_agent import role_in
 from local_agents.meeting_types import OTHER_TYPE, keyword_hint
@@ -170,6 +171,24 @@ def stories_case(now: datetime, path: str) -> dict:
     }
 
 
+def suche_case(store: Store, profile: Profile, now: datetime, question: str) -> dict:
+    """Eine Frage gegen den echten Bestand; erwartet wird zunaechst der jetzige beste Treffer."""
+    if not question.strip():
+        raise CaptureError('Gib die Frage an, etwa: merke suche "Aufbewahrungsfrist Quarantäne"')
+    index = search.Index(":memory:")
+    try:
+        index.update(search.collect(profile, store))
+        hits = index.search(question, 1)
+    finally:
+        index.close()
+    expectation = {"zuerst": hits[0].passage.title} if hits else {"leer": True}
+    return {
+        "name": _name(now, question),
+        "inputs": {"frage": question},
+        "evaluators": [{"Treffer": expectation}],
+    }
+
+
 def case_text(case: dict) -> str:
     return yaml.safe_dump([case], allow_unicode=True, sort_keys=False, default_flow_style=False, width=1000)
 
@@ -228,6 +247,8 @@ def main(args: list[str]) -> int:
             case = build(store, profile, now, number)
         elif agent == "stories":
             case = stories_case(now, argument)
+        elif agent == search.AGENT_NAME:
+            case = suche_case(store, profile, now, argument)
         else:
             raise CaptureError(f"Für {agent} gibt es noch kein Festhalten.")
         path = append_case(agent, case, evals.private_dir())

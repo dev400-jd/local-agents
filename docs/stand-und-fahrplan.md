@@ -10,7 +10,7 @@ beschrieben ist, zieht die betroffene Zeile nach und setzt das Datum oben neu.
 
 ## Bestand
 
-Zwölf Agenten und Bausteine lesen Kalender, Asana und Story-Dateien, machen
+Vierzehn Agenten und Bausteine lesen Kalender, Asana und Story-Dateien, machen
 daraus Aufgaben und Notizen und sprechen mit dem Nutzer. Einer davon erledigt
 selbst eine Aufgabe: Der Nachrichten-Agent schreibt den Entwurf zu einer
 Verschiebe-Aufgabe.
@@ -28,6 +28,8 @@ Verschiebe-Aufgabe.
 | Scrum Master | `scrum_master.py`, `telegram_bot.py` | Vermerkt Bemerkungen je Story, auf Wunsch fürs nächste Daily, per Terminal, Dialog oder Telegram | Beantwortet keine Fragen. Ein Satz zu mehreren Stories landet ganz bei jeder. Der Daily-Bezug hängt an Stichwörtern. |
 | Sprache | `voice.py`, `listen.py` | Vorlesen (Piper) und Zuhören (Whisper), beides lokal | Kein durchgehendes Gespräch, nur Frage und Antwort an einer Stelle im Planungs-Agenten. |
 | Messung | `evals.py`, `eval_suites.py`, `eval_capture.py` | Lässt fünf Agenten gegen feste Fälle laufen (auf Basis von pydantic-evals): Scrum Master, Rückmeldung, Status-Agent, Terminart, Story-Erkennung. Mehrfach, mit Quote, Mitschnitt der Modellantwort und Vergleich zum letzten Lauf. `merke` hält echte Fälle fest. | 55 erfundene Fälle, noch keine echten. Nicht gemessen: Ergebnisliste des Termin-Agenten, freie Texte von Kalender- und Asana-Agent, Spracheingabe. |
+| Suche | `search.py` | Findet ohne Modell die passenden Stories, Abschnitte, Bemerkungen, Einordnungen und Nachrichten zu einer Frage; gleicht den Index bei jedem Aufruf ab | Nur Wortsuche: keine Bedeutungen, keine Wortteile mitten im Wort. Noch kein Agent nutzt sie. Asana und Kalender fehlen. 15 erfundene Messfälle, keine echten. |
+| Kontextfenster | `context_window.py` | Zeigt je Modell, ob das Kontextfenster feststeht, und legt eine Variante mit 16K an | Die Variante muss von Hand ins Profil. Für das große Modell nicht erprobt. Kein Agent warnt, wenn ein Auftrag das Fenster sprengt. |
 | Profil und Datenbank | `profile.py`, `store.py` | Gemeinsames Gedächtnis: Kontexte, Rolle, Stresslevel, Aufgaben, Notizen, Laufprotokoll | Kein Gedächtnis über Gespräche, keine gelernten Vorlieben. |
 
 ## Fahrplan je Kategorie
@@ -57,6 +59,22 @@ Ein kleines Modell weiß wenig und hat 16K Kontext. Es braucht eine lokale Suche
 über Stories, Notizen, frühere Ergebnisse und später Dokumente, die nur die
 passenden Abschnitte in den Kontext legt. Das ist auch die Voraussetzung dafür,
 dass der Scrum Master Fragen zu einem Ticket beantworten kann.
+
+In drei Schritten:
+
+- **2a, gebaut (2026-11-19):** Index und Wortsuche über Stories, Bemerkungen,
+  Einordnungen und übernommene Nachrichten (`search.py`), mit eigenen
+  Messfällen. Die Suche wird getrennt vom Text gemessen, den ein Modell später
+  daraus schreibt: So ist erkennbar, ob ein Fehler beim Finden oder beim
+  Formulieren liegt. Dazu der Befehl, der das Kontextfenster je Modell prüft
+  und festlegt (`context_window.py`).
+- **2b, offen:** Bedeutungssuche mit einem kleinen Embedding-Modell, kombiniert
+  mit der Wortsuche. Sie kommt nur hinein, wenn sie die drei Fälle „Grenze der
+  Wortsuche" löst, ohne die anderen zu verschlechtern.
+- **2c, offen:** Vorbereitungs-Agent. Er erledigt Vorbereitungs-Aufgaben aus
+  den Treffern der Suche, nennt zu jeder Aussage die Quelle und legt den
+  Entwurf zur Freigabe vor. Der Code wählt die Treffer aus und prüft, dass
+  jede genannte Story und jede Zahl darin steht.
 
 ### 3. Messen
 
