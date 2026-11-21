@@ -74,6 +74,14 @@ sync_minutes = 30
 # jede Aktion nach Freigabe. Zum Ausprobieren ein eigenes Uebungsprojekt nehmen.
 # write_projects = ["Uebungsprojekt"]
 
+# Ordner mit Word-, PowerPoint-, PDF- und Excel-Dateien fuer die Suche, etwa eine
+# SharePoint-Bibliothek, die OneDrive lokal abgleicht. Gelesen wird nur, und nur
+# was hier steht. Dateien, die "nur online" vorliegen, werden uebersprungen.
+# Vorher: pip install pypdf python-docx python-pptx openpyxl
+# [documents]
+# folders = ["~/Library/CloudStorage/OneDrive-Firma/Projektordner"]
+# exclude = ["Archiv/*", "*.xlsm"]
+
 # Suche (python -m local_agents.search): Mit einem Embedding-Modell findet sie
 # auch nach Bedeutung, nicht nur nach Worten. Vorher: ollama pull bge-m3
 # [search]

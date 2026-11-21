@@ -81,6 +81,10 @@ class Profile:
     asana_sync_minutes: int = 30
     # Projekte, in die der Agent schreiben darf (asana_actions.py); leer = nirgends.
     asana_write_projects: tuple[str, ...] = ()
+    # Ordner mit Office- und PDF-Dateien fuer die Suche (documents.py), etwa eine
+    # lokal abgeglichene SharePoint-Bibliothek; leer = keine.
+    document_folders: tuple[str, ...] = ()
+    document_exclude: tuple[str, ...] = ()  # Muster auf den Pfad relativ zum Ordner, etwa "Archiv/*"
     # Embedding-Modell der Bedeutungssuche (search.py); leer = nur Wortsuche.
     search_embeddings: str = ""
     watch_notify: bool = True
@@ -210,6 +214,12 @@ def _names(value: object) -> tuple[str, ...]:
     return tuple(item.strip() for item in value)
 
 
+def _strings(value: object, where: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or not all(isinstance(item, str) and item.strip() for item in value):
+        raise ProfileError(f"{where} braucht eine Liste von Texten.")
+    return tuple(item.strip() for item in value)
+
+
 def _minutes(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ProfileError("sync_minutes unter [asana] braucht eine ganze Zahl ab 0 (0 = aus).")
@@ -300,6 +310,8 @@ def load_profile(path: Path | None = None) -> Profile:
         sync_enabled=bool(planning.get("sync", True)),
         asana_sync_minutes=_minutes(data.get("asana", {}).get("sync_minutes", 30)),
         asana_write_projects=_names(data.get("asana", {}).get("write_projects", [])),
+        document_folders=_strings(data.get("documents", {}).get("folders", []), "folders unter [documents]"),
+        document_exclude=_strings(data.get("documents", {}).get("exclude", []), "exclude unter [documents]"),
         search_embeddings=str(data.get("search", {}).get("embeddings", "")).strip(),
         watch_notify=bool(data.get("watch", {}).get("notify", True)),
         watch_speak=bool(data.get("watch", {}).get("speak", False)),

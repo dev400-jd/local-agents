@@ -861,6 +861,7 @@ Durchsucht werden:
 |---|---|
 | Story-Dateien der Kontexte mit `stories_dir` | Story und sonstigem Abschnitt (Ziel, Architektur …) |
 | Übrige Markdown-Dateien in diesen Ordnern (Protokolle, Recaps, Notizen) | Überschriften-Abschnitt, als „Dokument" |
+| [Dokumentordner](#dokumentordner-sharepoint-und-onedrive) aus dem Profil: Word, PowerPoint, PDF, Excel | Überschrift, Folie, Seite oder Tabellenblatt, als „Dokument" |
 | Bemerkungen aus dem Scrum Master | Bemerkung, ohne die entfernten |
 | Einordnungen des Termin-Agenten | Termin |
 | Nachrichten-Agent | übernommener Nachricht |
@@ -947,6 +948,75 @@ Grenzen:
 - **Ein Allerweltswort genügt der Wortsuche für einen Treffer.** Die
   Bedeutungssuche nimmt solche Treffer nicht wieder heraus, sie stuft sie nur
   herab.
+
+## Dokumentordner: SharePoint und OneDrive
+
+Die Suche liest auch Word-, PowerPoint-, PDF- und Excel-Dateien aus Ordnern,
+die du im Profil nennst. Gedacht ist das für SharePoint-Bereiche, die OneDrive
+lokal abgleicht: kein eigener Zugang zu Microsoft, keine App-Registrierung.
+
+```toml
+[documents]
+folders = ["~/Library/CloudStorage/OneDrive-Firma/Projektordner"]
+exclude = ["Archiv/*", "*.xlsm"]
+```
+
+```bash
+.venv/bin/pip install pypdf python-docx python-pptx openpyxl   # einmalig
+.venv/bin/python -m local_agents.search index
+```
+
+```text
+Abgeglichen: 105 neu, 0 geändert, 0 entfernt.
+Dokumentordner Projektordner: 4 Dateien gelesen, 7 nur online und übersprungen (im Finder „Immer auf diesem Gerät behalten“), 1 mit anderem Dateityp.
+```
+
+So kommt ein SharePoint-Bereich auf den Rechner (die Menünamen können
+abweichen):
+
+- **Einzelner Ordner:** in der Dokumentbibliothek den Ordner wählen und
+  „Verknüpfung zu Meine Dateien hinzufügen". Er erscheint unter
+  `~/Library/CloudStorage/OneDrive-<Firma>/`.
+- **Ganze Bibliothek:** „Synchronisieren". Sie erscheint unter
+  `~/Library/CloudStorage/OneDrive-SharedLibraries-<Firma>/`.
+- Danach im Finder mit der rechten Maustaste „Immer auf diesem Gerät
+  behalten", sonst liegen nur Platzhalter auf der Platte.
+
+Was gelesen wird (`documents.py`), je Datei in Abschnitten:
+
+| Dateityp | Ein Abschnitt je |
+|---|---|
+| Word (.docx) | Überschrift; Tabellen als Zeilen |
+| PowerPoint (.pptx) | Folie, mit Titel, Text, Tabellen und Notizen |
+| PDF | Seite |
+| Excel (.xlsx, .xlsm) | Tabellenblatt, die ersten 200 Zeilen |
+| Markdown, Text | Überschrift bzw. die ganze Datei |
+
+Jeder Abschnitt wird ein Eintrag der Art „Dokument" im Suchindex. Damit
+arbeiten Suche, Gesprächs-Agent und „Beschreibung aus einem Dokument" sofort
+auch mit diesen Dateien. Der Kontext (etwa der Kunde) ergibt sich aus dem
+Namen des Ordners über die Stichworte im Profil.
+
+Das Lesen dauert bei großen Dateien; deshalb merkt sich der Index, was er
+gelesen hat, und liest eine Datei erst wieder, wenn sich Größe oder
+Änderungszeit ändern.
+
+Grenzen und Vorsicht:
+
+- **Gelesen wird nur.** Das Modul öffnet keine Datei zum Schreiben. Der
+  Abgleich von OneDrive geht aber in beide Richtungen: Löschst oder änderst
+  du selbst eine Datei im lokalen Ordner, passiert das auch in SharePoint.
+- **„Nur online" wird übersprungen** und gezählt. Solche Dateien zu lesen
+  würde sie herunterladen.
+- **Die Texte stehen im Klartext im Suchindex** auf deiner Platte und gehen an
+  das lokale Embedding- und Sprachmodell. Für Kundendaten gelten womöglich
+  eigene Regeln, auch wenn nichts den Rechner verlässt.
+- **Excel und PowerPoint geben wenig Fließtext her;** die Suche findet darin
+  schlechter. Eingescannte PDFs ohne Textebene bleiben leer.
+- **Nicht dabei:** SharePoint-Seiten, Listen, News, Versionen, Freigaben,
+  Bilder, alte Formate (.doc, .ppt, .xls).
+- **Übersprungen** werden versteckte Dateien, Sperrdateien von Office
+  („~$…"), Dateien über 60 MB und alles, was auf `exclude` passt.
 
 ## Asana-Spiegel
 
@@ -1289,6 +1359,7 @@ Je Frage läuft dasselbe Muster wie beim Nachrichten-Agenten:
    | nennt ein Kürzel: „QG-3" | diese Story mit ihren Bemerkungen |
    | schließt an die vorige Antwort an: beginnt mit „und", verweist („dazu", „dort", „sie") oder hat höchstens zwei Inhaltsworte | die Story der vorigen Antwort |
    | fragt nach dem Überblick: „welche Stories", „Übersicht", „Reihenfolge" | die Gliederung des Features, ohne genanntes Feature die Liste aller Features |
+   | nennt ein Dokument: Dateiname, Pfad, ganzer Titel oder Worte daraus („die Präsentation Lieferketten") | dieses Dokument der Reihe nach, so weit der Platz reicht |
    | sonst | die besten vier Treffer der [Suche](#suche), in einem genannten Feature zuerst dort |
 
    Vor alledem: Eine Listenfrage zu Asana-Aufgaben („welche Aufgaben …", „was
@@ -1298,9 +1369,30 @@ Je Frage läuft dasselbe Muster wie beim Nachrichten-Agenten:
    Ein Feature gilt als genannt, wenn die Frage ein Wort enthält, das nur in
    seinem Titel steht. Zur Auswahl kommt immer die Gliederung des Features:
    die Namen seiner Stories in der Reihenfolge der Datei.
+   Ein Dokument (Präsentation, Word-Datei, Recap) gilt als genannt, wenn die
+   Frage seinen Dateinamen, Pfad oder ganzen Titel enthält. Sonst zählen Worte
+   aus Titel und Unterordner: Es müssen mindestens zwei passen, darunter eines
+   aus dem Titel, das höchstens drei Dokumente tragen. Nennt die Frage die Art
+   der Datei („Präsentation", „Excel", „Word", „PDF"), genügt ein Wort unter
+   Dateien dieser Art. Passen zwei Dokumente gleich gut, gehen beide ans
+   Modell, je zur Hälfte des Platzes; die Zeile „Grundlage" nennt sie.
+
+   Fragen an ein Dokument meinen oft das Ganze („welche Methodik vermittelt
+   der Workshop?"); vier Einzeltreffer beantworten das nicht. Deshalb bekommt
+   das Modell das Dokument selbst: rund 9000 Zeichen, mit einem Modell mit
+   16 000 Tokens [Kontextfenster](#kontextfenster) rund 24 000. Passt es nicht
+   ganz, bleiben die zur Frage passendsten Abschnitte in der Reihenfolge der
+   Datei, und das Modell bekommt dazu die Gliederung aller Abschnitte. Eine
+   Anschlussfrage bleibt beim Dokument.
 2. **Antworten (Modell):** Das Modell bekommt nur diese Einträge (höchstens
    rund 9000 Zeichen), die Gliederung und die letzten zwei Wortwechsel, und
    antwortet in der verlangten Form.
+   Eine Ausnahme vom „nur aus den Einträgen": Beschreiben sie erkennbar ein
+   bekanntes Verfahren, ohne es beim Namen zu nennen, und fragt die Frage
+   danach, darf das Modell den Namen in einer eigenen letzten Zeile nennen.
+   Der Code kennzeichnet sie immer als
+   „Einordnung (steht nicht in den Unterlagen): …". Prüfen kann er sie nicht;
+   sie ist die Einschätzung des Modells und hängt davon ab, was es weiß.
 3. **Prüfen (Code):** Jedes Story-Kürzel und jede Zahl der Antwort muss in dem
    stehen, was das Modell gesehen hat. Hat der Code die Story über ihre Stelle
    bestimmt („als Letztes", „nach QG-3"), muss die Antwort ihr Kürzel nennen,

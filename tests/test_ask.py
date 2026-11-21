@@ -240,5 +240,109 @@ class TestConversation(AskCase):
         self.assertEqual(printed[4], "Neues Thema.")
 
 
+def slide(deck: str, path: str, number: int, heading: str, text: str) -> Passage:
+    return Passage(
+        f"dokument:{path}#{number}", search.DOCUMENT, f"{deck}: Folie {number}: {heading}", text,
+        source=path, feature=deck, position=number,
+    )
+
+
+class TestNamedDocument(AskCase):
+    """Nennt die Frage ein Dokument, bekommt das Modell dieses der Reihe nach statt einzelner Treffer."""
+
+    DECK, RECAP, LIST = "Bestellwesen - Lieferketten", "Lieferketten: Vorgehen nach der Schulung", "Preisliste"
+
+    def setUp(self) -> None:
+        super().setUp()
+        deck = [
+            slide(self.DECK, "Ablage/Schulungen/Bestellwesen - Lieferketten.pptx", number, heading, text)
+            for number, (heading, text) in enumerate(
+                [
+                    ("Lieferketten verstehen", "Agenda der Schulung."),
+                    ("Vorgehen", "Die Schulung folgt dem Kanban-Verfahren mit Zugsteuerung."),
+                    ("Rollen", "Disponent und Einkäufer teilen sich die Freigabe."),
+                    ("Beschlüsse", "Am Ende stehen Beschlüsse mit Name und Datum."),
+                ],
+                start=1,
+            )
+        ]
+        recap = [
+            Passage(f"dokument:recap#{n}", search.DOCUMENT, f"{self.RECAP}: {h}", t, source="recap.md", feature=self.RECAP, position=n)
+            for n, (h, t) in enumerate([("Nutzen", "Die Schulung kam gut an."), ("Offen", "Zwei Punkte sind offen.")], start=1)
+        ]
+        prices = [slide(self.LIST, "Ablage/Preisliste.xlsx", 1, "Blatt 1", "Schraube | 0,10")]
+        self.index.update(
+            search.story_passages("Beispiel", VAULT) + deck + recap + prices
+        )
+
+    def test_a_file_path_names_the_document_and_is_not_searched_for(self) -> None:
+        question = "Welches Verfahren lehrt ('/Users/x/Ablage/Schulungen/Bestellwesen - Lieferketten.pptx')?"
+        named, cleaned = ask.named_documents(question, self.index.document_sources())
+        self.assertEqual(named, [self.DECK])
+        self.assertEqual(cleaned, "Welches Verfahren lehrt ?")
+        selection = self.select(question)
+        self.assertEqual(selection.documents, (self.DECK,))
+        self.assertEqual([entry.position for entry in selection.entries], [1, 2, 3, 4])
+        self.assertEqual(selection.how, f"Dokument „{self.DECK}“")
+        self.assertEqual(ask.source_line(selection), f"Grundlage (Dokument „{self.DECK}“)")
+
+    def test_the_kind_of_file_decides_between_documents_with_the_same_word(self) -> None:
+        sources = self.index.document_sources()
+        self.assertEqual(ask.named_documents("Was lehrt die Präsentation Lieferketten?", sources)[0], [self.DECK])
+        # Ohne die Art passt "Lieferketten" auf zwei Dokumente gleich gut, und ein Wort allein genügt nicht.
+        self.assertEqual(ask.named_documents("Was ist mit den Lieferketten?", sources)[0], [])
+
+    def test_two_documents_that_fit_equally_are_both_taken(self) -> None:
+        # "Schulung" steht beim Deck im Ordner, beim Recap im Titel.
+        selection = self.select("Welches Verfahren vermittelt die Schulung Lieferketten?")
+        self.assertEqual(set(selection.documents), {self.DECK, self.RECAP})
+        self.assertEqual(len(selection.entries), 6)
+        self.assertEqual(selection.outline, ())
+
+    def test_a_question_about_stories_is_not_taken_for_a_document(self) -> None:
+        selection = self.select("Was passiert mit abgewiesenen Lieferungen?")
+        self.assertEqual(selection.documents, ())
+        self.assertEqual(ask.named_documents("Was kostet eine Schraube?", self.index.document_sources())[0], [])
+
+    def test_a_document_too_large_keeps_the_best_sections_in_order_and_gets_an_outline(self) -> None:
+        selection = ask.select(self.index, "Wer gibt laut der Präsentation Lieferketten frei, welche Rollen?", None, budget=80)
+        self.assertEqual(selection.documents, (self.DECK,))
+        positions = [entry.position for entry in selection.entries]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn(3, positions)
+        self.assertLess(len(positions), 4)
+        self.assertEqual(selection.outline[0], "Folie 1: Lieferketten verstehen")
+        self.assertEqual(len(selection.outline), 4)
+        self.assertIn("von 4 Abschnitten", selection.how)
+        self.assertIn("Gliederung des Dokuments", ask.outline_text(selection))
+
+    def test_a_follow_up_stays_with_the_document(self) -> None:
+        first = self.select("Was lehrt die Präsentation Lieferketten?")
+        self.assertTrue(first.focus.startswith(ask.DOCUMENT_FOCUS))
+        self.assertEqual(self.select("Und die Rollen?", first.focus).documents, (self.DECK,))
+        self.assertEqual(self.select("Was ist in QG-3 geregelt?", first.focus).documents, ())
+
+    def test_a_classification_is_marked_as_not_from_the_material(self) -> None:
+        seen: list = []
+        model = saying("Die Schulung folgt dem Kanban-Verfahren.\n**Einordnung:** Lean, erkennbar an der Zugsteuerung.", seen=seen)
+        answer = ask.Conversation(self.index, model).ask("Welchen Ansatz lehrt die Präsentation Lieferketten?")
+        self.assertEqual(
+            answer.text.splitlines()[-1],
+            "Einordnung (steht nicht in den Unterlagen): Lean, erkennbar an der Zugsteuerung.",
+        )
+        self.assertIn("Einordnung:", seen[0])
+        # Auch die Einordnung darf keine Zahlen erfinden.
+        model = saying("Kanban.\nEinordnung: Lean seit 1948.", "Kanban.")
+        self.assertEqual(ask.Conversation(self.index, model).ask("Welchen Ansatz lehrt die Präsentation Lieferketten?").text, "Kanban.")
+
+    def test_the_model_sees_the_whole_document(self) -> None:
+        seen: list = []
+        conversation = ask.Conversation(self.index, saying("Kanban-Verfahren mit Zugsteuerung.", seen=seen))
+        answer = conversation.ask("Welches Verfahren lehrt die Präsentation Lieferketten?")
+        self.assertEqual(answer.source, ask.MODEL)
+        for text in ("Agenda der Schulung", "Kanban-Verfahren", "Beschlüsse mit Name und Datum"):
+            self.assertIn(text, seen[0])
+
+
 if __name__ == "__main__":
     unittest.main()

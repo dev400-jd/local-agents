@@ -20,6 +20,8 @@ dependencies = [
 calendar = ["pyobjc-framework-EventKit>=13.0; sys_platform == 'darwin'"]
 # Messung der Agenten gegen feste Faelle (python -m local_agents.evals).
 evals = ["pydantic-evals>=2.68"]
+# Word, PowerPoint, PDF und Excel fuer die Suche lesen (documents.py).
+documents = ["pypdf", "python-docx", "python-pptx", "openpyxl"]
 
 [tool.setuptools]
 packages = ["local_agents"]

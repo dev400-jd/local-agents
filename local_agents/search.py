@@ -10,6 +10,8 @@ Durchsucht werden:
   Abschnitt ein Eintrag),
 - die uebrigen Markdown-Dateien in diesen Ordnern, etwa Protokolle und Recaps
   (je Ueberschriften-Abschnitt ein Eintrag der Art "Dokument"),
+- Word, PowerPoint, PDF und Excel aus den Ordnern unter ``[documents]`` im
+  Profil, etwa eine lokal abgeglichene SharePoint-Bibliothek (documents.py),
 - deine Bemerkungen aus dem Scrum Master (ohne die entfernten),
 - die Einordnungen des Termin-Agenten,
 - uebernommene Nachrichten des Nachrichten-Agenten,
@@ -32,6 +34,7 @@ Wortteile mitten im Wort ("Schnittstelle" findet nicht "Datenschnittstelle").
 """
 
 import hashlib
+import json
 import os
 import re
 import sqlite3
@@ -44,7 +47,7 @@ from pathlib import Path
 
 import numpy as np
 
-from local_agents import stories
+from local_agents import documents, stories
 from local_agents.asana_mirror import Mirror, mirror_path
 from local_agents.meeting_types import BY_ID
 from local_agents.profile import Profile, ProfileError, load_profile
@@ -109,6 +112,7 @@ DROP TRIGGER IF EXISTS vectors_delete;
 DROP TABLE IF EXISTS passages_fts;
 DROP TABLE IF EXISTS vectors;
 DROP TABLE IF EXISTS passages;
+DROP TABLE IF EXISTS extracted;
 """
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS passages (
@@ -143,6 +147,11 @@ CREATE TABLE IF NOT EXISTS vectors (
 CREATE TRIGGER IF NOT EXISTS vectors_delete AFTER DELETE ON passages BEGIN
     DELETE FROM vectors WHERE passage_id = old.id;
 END;
+CREATE TABLE IF NOT EXISTS extracted (
+    path     TEXT PRIMARY KEY,   -- Office- oder PDF-Datei aus einem Ordner unter [documents]
+    stamp    TEXT NOT NULL,      -- Groesse und Aenderungszeit; aendert sie sich, wird neu gelesen
+    sections TEXT NOT NULL       -- JSON: [[Ueberschrift, Text], ...]
+);
 """
 
 
@@ -448,14 +457,81 @@ def asana_passages(mirror: Mirror, profile: Profile) -> list[Passage]:
     return found
 
 
-def collect(profile: Profile, store: Store, mirror: Mirror | None = None) -> list[Passage]:
+def folder_passages(profile: Profile, index: "Index | None" = None, notes: list[str] | None = None) -> list[Passage]:
+    """Office- und PDF-Dateien aus den Ordnern unter ``[documents]``: je Abschnitt ein Eintrag der Art "Dokument".
+
+    ``index`` merkt sich gelesene Dateien, damit unveraenderte nicht erneut
+    gelesen werden. ``notes`` sammelt, was uebersprungen wurde.
+    """
+    found: list[Passage] = []
+    read: set[str] = set()
+    titles: set[str] = set()
+    for raw in profile.document_folders:
+        folder = Path(raw).expanduser()
+        if not folder.is_dir():
+            if notes is not None:
+                notes.append(f"Dokumentordner nicht gefunden: {folder.name}")
+            continue
+        listed = documents.list_files(folder, profile.document_exclude)
+        unreadable: list[str] = []
+        context = profile.classify(folder.name)
+        label = profile.label(context) if context in {c.id for c in profile.contexts} else ""
+        for path in listed.files:
+            relative = str(path.relative_to(folder))
+            try:
+                sections = index.sections_of(path) if index is not None else documents.read_sections(path)
+            except documents.Unreadable as exc:
+                unreadable.append(f"{relative}: {exc}")
+                continue
+            except OSError as exc:
+                unreadable.append(f"{relative}: {exc.strerror or exc}")
+                continue
+            read.add(str(path))
+            title = path.stem if path.stem not in titles else f"{path.stem} ({path.parent.name}, {path.suffix[1:]})"
+            titles.add(title)
+            for position, section in enumerate(sections, start=1):
+                heading = f"{title}: {section.heading}" if section.heading else title
+                found += _pieces(
+                    f"{DOCUMENT}:{folder.name}/{relative}#{position}",
+                    DOCUMENT,
+                    heading,
+                    section.text,
+                    context=label,
+                    source=f"{folder.name}/{relative}",
+                    feature=title,
+                    position=position,
+                )
+        if notes is not None:
+            parts = [f"{len(listed.files) - len(unreadable)} Dateien gelesen"]
+            if listed.online_only:
+                parts.append(
+                    f"{listed.online_only} nur online und übersprungen (im Finder „Immer auf diesem Gerät behalten“)"
+                )
+            if listed.other_types:
+                parts.append(f"{listed.other_types} mit anderem Dateityp")
+            notes.append(f"Dokumentordner {folder.name}: {', '.join(parts)}.")
+            notes += [f"  nicht lesbar: {line}" for line in unreadable]
+    if index is not None:
+        index.forget_files(read)
+    return found
+
+
+def collect(
+    profile: Profile,
+    store: Store,
+    mirror: Mirror | None = None,
+    index: "Index | None" = None,
+    notes: list[str] | None = None,
+) -> list[Passage]:
     """Alles, was durchsuchbar sein soll, aus den Quellen des Profils.
 
-    Ohne ``mirror`` wird der Asana-Spiegel gelesen, wenn es ihn gibt.
+    Ohne ``mirror`` wird der Asana-Spiegel gelesen, wenn es ihn gibt. ``index``
+    merkt sich gelesene Office- und PDF-Dateien; ``notes`` sammelt Hinweise.
     """
     found: list[Passage] = []
     for label, folder in stories.story_folders(profile):
         found += story_passages(label, folder)
+    found += folder_passages(profile, index, notes)
     found += store_passages(store, profile)
     if mirror is not None:
         return found + asana_passages(mirror, profile)
@@ -537,6 +613,30 @@ class Index:
             {row["kind"]: row["n"] for row in self.db.execute("SELECT kind, count(*) AS n FROM passages GROUP BY kind")}
         )
 
+    # --- Gelesene Dateien: Office und PDF zu lesen dauert, deshalb nur nach einer Aenderung
+
+    def sections_of(self, path: Path) -> list[documents.Section]:
+        """Die Abschnitte der Datei, aus dem Zwischenspeicher, solange sie unveraendert ist. Wirft ``Unreadable``."""
+        status = path.stat()
+        stamp = f"{status.st_size}:{status.st_mtime_ns}"
+        row = self.db.execute("SELECT stamp, sections FROM extracted WHERE path = ?", (str(path),)).fetchone()
+        if row is not None and row["stamp"] == stamp:
+            return [documents.Section(heading, text) for heading, text in json.loads(row["sections"])]
+        sections = documents.read_sections(path)
+        with self.db:
+            self.db.execute(
+                "INSERT INTO extracted (path, stamp, sections) VALUES (?, ?, ?) "
+                "ON CONFLICT(path) DO UPDATE SET stamp = excluded.stamp, sections = excluded.sections",
+                (str(path), stamp, json.dumps([[s.heading, s.text] for s in sections], ensure_ascii=False)),
+            )
+        return sections
+
+    def forget_files(self, keep: set[str]) -> None:
+        """Vergisst gelesene Dateien, die es nicht mehr gibt oder die nicht mehr im Profil stehen."""
+        known = [row["path"] for row in self.db.execute("SELECT path FROM extracted")]
+        with self.db:
+            self.db.executemany("DELETE FROM extracted WHERE path = ?", [(path,) for path in known if path not in keep])
+
     # --- Aufbau: Features und ihre Stories
 
     def features(self) -> list[str]:
@@ -553,6 +653,14 @@ class Index:
             "SELECT DISTINCT feature FROM passages WHERE feature <> '' AND kind = ? ORDER BY feature", (DOCUMENT,)
         )
         return [row["feature"] for row in rows]
+
+    def document_sources(self) -> dict[str, str]:
+        """Titel -> Quelle (Pfad der Datei) aller Dokumente im Index."""
+        rows = self.db.execute(
+            "SELECT feature, min(source) AS source FROM passages WHERE feature <> '' AND kind = ? GROUP BY feature",
+            (DOCUMENT,),
+        )
+        return {row["feature"]: row["source"] or "" for row in rows}
 
     def document(self, title: str) -> list[Passage]:
         """Alle Abschnitte eines Dokuments in der Reihenfolge der Datei."""
@@ -805,9 +913,9 @@ def fts_query(question: str) -> str:
 # --- Bedienung
 
 
-def refresh(index: Index, profile: Profile, store: Store) -> Changes:
-    """Gleicht den Index mit den Quellen ab."""
-    return index.update(collect(profile, store))
+def refresh(index: Index, profile: Profile, store: Store, notes: list[str] | None = None) -> Changes:
+    """Gleicht den Index mit den Quellen ab. ``notes`` sammelt, was beim Lesen der Dokumentordner auffiel."""
+    return index.update(collect(profile, store, index=index, notes=notes))
 
 
 def prepare_meaning(index: Index, profile: Profile, notes: list[str] | None = None) -> Embedder | None:
@@ -879,13 +987,16 @@ def main(argv: list[str]) -> int:
         return 1
     store, index = Store(), Index()
     try:
-        changes = refresh(index, profile, store)
+        folder_notes: list[str] = []
+        changes = refresh(index, profile, store, folder_notes)
         notes: list[str] = []
         embedder = prepare_meaning(index, profile, notes)
         if notes:
             print("\n".join(notes), file=sys.stderr)
         if args[0] == "index":
             print(f"Abgeglichen: {changes.added} neu, {changes.changed} geändert, {changes.removed} entfernt.")
+            for line in folder_notes:
+                print(line)
             print(count_line(index.counts()))
             print(
                 f"Bedeutungssuche: {profile.search_embeddings}, {index.vector_count()} Einträge mit Vektor."

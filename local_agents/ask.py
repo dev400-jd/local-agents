@@ -12,11 +12,16 @@ Der Ablauf je Frage:
 1. Auswaehlen (Code): Welche Eintraege braucht die Antwort? Der Code liest die
    Frage nach Story-Kuerzeln ("QG-3"), nach einem genannten Feature und nach
    Worten fuer eine Stelle im Feature ("als Letztes", "zuerst", "nach QG-3").
+   Nennt die Frage ein Dokument (Titel, Dateiname oder Pfad), bekommt das Modell
+   dieses Dokument der Reihe nach, so weit das Kontextfenster reicht.
    Sonst sucht er (search.py, mit Bedeutungssuche, wenn sie im Profil steht).
    Bei einer Anschlussfrage bleibt die Story der vorigen Antwort dabei.
 2. Antworten (Modell): Das Modell bekommt nur diese Eintraege, die Gliederung
    des Features und die letzten Wortwechsel, und antwortet in der verlangten
    Form.
+   Beschreiben die Eintraege ein bekanntes Verfahren, ohne es zu nennen, darf
+   es dessen Namen in einer eigenen Zeile "Einordnung" anfuegen; der Code
+   kennzeichnet sie als nicht aus den Unterlagen stammend.
 3. Pruefen (Code): Jedes Story-Kuerzel und jede Zahl der Antwort muss in dem
    stehen, was das Modell gesehen hat. Sonst geht die Antwort zurueck ans
    Modell; gelingt es nicht, zeigt der Agent die Fundstellen statt einer
@@ -36,11 +41,12 @@ from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
 from local_agents import asana_tasks, search
-from local_agents.agent import MODEL_SETTINGS, ollama_model
+from local_agents.agent import MODEL_NAME, MODEL_SETTINGS, ollama_model
 from local_agents.asana_mirror import Mirror, mirror_path
 from local_agents.checks import invented_numbers
+from local_agents.context_window import OllamaError, fixed_context
 from local_agents.profile import ProfileError, load_profile
-from local_agents.search import REMARK, STORY, Embedder, Index, Passage
+from local_agents.search import DOCUMENT, REMARK, STORY, Embedder, Index, Passage
 from local_agents.store import Store
 
 AGENT_NAME = "fragen"
@@ -58,9 +64,24 @@ STORY_WORDS = re.compile(r"\b(story|stories|feature|features|akzeptanzkriteri\w*
 # Auftrag, Gliederung und Antwort passt das in ein Kontextfenster ab 8K.
 ENTRY_BUDGET = 9000
 SEARCH_HITS = 4
+# Ein genanntes Dokument geht moeglichst ganz ans Modell; mit grossem Kontextfenster mehr davon.
+LARGE_BUDGET = 24000
+LARGE_CONTEXT = 16000
+# Ein Wort benennt ein Dokument nur, wenn es in den Titeln hoechstens so vieler Dokumente steht.
+MAX_SHARED = 3
+MAX_NAMED = 2  # so viele Dokumente darf eine Frage zugleich meinen
+DOCUMENT_FOCUS = "dokument:"
+# Worte fuer die Art einer Datei und die Endungen dazu.
+FILE_KINDS = (
+    (re.compile(r"\b(präsentation|folien\w*|deck|powerpoint|slides)\b"), ("pptx",)),
+    (re.compile(r"\b(excel\w*|tabelle|arbeitsmappe|spreadsheet)\b"), ("xlsx", "xlsm")),
+    (re.compile(r"\b(word|word-dokument|worddokument)\b"), ("docx",)),
+    (re.compile(r"\bpdf\b"), ("pdf",)),
+)
+FILE_PATH = re.compile(r"""['"„“(]*((?:~|/)[^'"\n]*?\.(?:docx|pptx|pdf|xlsx|xlsm|md|txt))['"“)]*""", re.IGNORECASE)
 HISTORY_TURNS = 2
 MAX_HISTORY_CHARS = 600
-NOTHING_FOUND = "Dazu habe ich in Stories, Bemerkungen und Asana-Aufgaben nichts gefunden."
+NOTHING_FOUND = "Dazu habe ich in Stories, Bemerkungen, Dokumenten und Asana-Aufgaben nichts gefunden."
 
 FIRST, LAST, NEXT, PREVIOUS = "erste", "letzte", "nächste", "vorige"
 LAST_WORDS = re.compile(r"\b(letzte[nrs]?|zuletzt|am ende|am schluss|abschließend|abschluss|endet|hört)\b")
@@ -82,6 +103,8 @@ BEFORE_KEY = re.compile(rf"\bvor\s+({KEY})\b")
 GENERIC_TITLE_WORDS = frozenset(
     "feature features story stories user planung plan zielbild anforderungen konzept stand übersicht".split()
 )
+CLASSIFICATION = re.compile(r"^[*_]*Einordnung[*_]*(?:\s*\([^)\n]*\))?\s*:[*_]*\s*", re.MULTILINE)
+CLASSIFICATION_LABEL = "Einordnung (steht nicht in den Unterlagen): "
 LIST_MARKER = re.compile(r"^\s*\d+[.)]\s", re.MULTILINE)
 PART_SUFFIX = re.compile(r" \(Teil \d+ von \d+\)$")
 
@@ -98,6 +121,8 @@ class Selection:
     # Kuerzel der Story, die der Code ueber ihre Stelle bestimmt hat ("als Letztes",
     # "nach QG-3"). Der Nutzer kennt sie nicht, also muss die Antwort sie nennen.
     resolved: str = ""
+    # Dokumente, die die Frage nennt; dann sind die Eintraege ihre Abschnitte der Reihe nach.
+    documents: tuple[str, ...] = ()
 
     def titles(self) -> list[str]:
         """Titel der Eintraege ohne den Zusatz zu Teilen, jeder einmal."""
@@ -143,6 +168,58 @@ def named_feature(question: str, features: list[str]) -> str:
     return winners[0] if best and len(winners) == 1 else ""
 
 
+def named_documents(question: str, sources: dict[str, str]) -> tuple[list[str], str]:
+    """(Dokumente, die die Frage nennt; die Frage ohne Dateipfad).
+
+    ``sources`` ist Titel -> Quelle (Pfad der Datei). Woertlich genannt ist ein
+    Dokument mit Dateiname oder ganzem Titel. Sonst zaehlen Worte aus Titel und
+    Unterordner. Damit nicht jedes Allerweltswort ein Dokument benennt, muss
+
+    - mindestens ein Wort des Titels passen, das nur wenige Dokumente tragen, und
+    - mehr als ein Wort passen; nennt die Frage die Art der Datei
+      ("Praesentation", "Excel"), genuegt ein Wort unter Dateien dieser Art.
+
+    Passen mehrere gleich gut, gelten bis zu ``MAX_NAMED`` gemeinsam.
+    """
+    lower = question.casefold()
+    literal = [
+        title
+        for title, source in sources.items()
+        if source.rsplit("/", 1)[-1].casefold() in lower or (len(title) >= 8 and title.casefold() in lower)
+    ]
+    cleaned = " ".join(FILE_PATH.sub(" ", question).split())
+    if literal:
+        return sorted(literal, key=len, reverse=True)[:1], cleaned
+    titles = {title: title_words(title) for title in sources}
+    folders = {
+        title: set().union(*(title_words(part) for part in source.split("/")[1:-1]), set())
+        for title, source in sources.items()
+    }
+    shared: dict[str, int] = {}
+    for title in sources:
+        for word in titles[title] | folders[title]:
+            shared[word] = shared.get(word, 0) + 1
+    asked = {search.stem(word) for word in search.content_words(cleaned) if len(word) >= 4}
+
+    def matched(words: set[str]) -> set[str]:
+        return {own for own in words if any(word.startswith(own) or own.startswith(word) for word in asked)}
+
+    suffixes = {suffix for pattern, wanted in FILE_KINDS for suffix in wanted if pattern.search(lower)}
+    scores: dict[str, int] = {}
+    for title, source in sources.items():
+        of_kind = source.rsplit(".", 1)[-1].casefold() in suffixes
+        if suffixes and not of_kind:
+            continue
+        in_title = matched(titles[title])
+        score = len(in_title | matched(folders[title]))
+        rare = any(shared[word] <= MAX_SHARED for word in in_title)
+        if rare and (score >= 2 or of_kind):
+            scores[title] = score
+    best = max(scores.values(), default=0)
+    winners = [title for title, score in scores.items() if score == best]
+    return (winners if len(winners) <= MAX_NAMED else []), cleaned
+
+
 def position_asked(question: str) -> tuple[str, str]:
     """(Stelle, Kuerzel): FIRST/LAST ohne Kuerzel, NEXT/PREVIOUS mit dem Kuerzel, auf das sie sich beziehen."""
     lower = question.lower()
@@ -158,14 +235,14 @@ def position_asked(question: str) -> tuple[str, str]:
     return "", ""
 
 
-def _budgeted(passages: list[Passage]) -> tuple[Passage, ...]:
+def _budgeted(passages: list[Passage], budget: int = ENTRY_BUDGET) -> tuple[Passage, ...]:
     """Die Eintraege der Reihe nach, bis das Budget voll ist; der erste immer."""
     taken: list[Passage] = []
     used = 0
     for passage in passages:
         if passage.ref in {entry.ref for entry in taken}:
             continue
-        if taken and used + len(passage.text) > ENTRY_BUDGET:
+        if taken and used + len(passage.text) > budget:
             continue
         taken.append(passage)
         used += len(passage.text)
@@ -182,11 +259,50 @@ def _outline(stories: list[Passage]) -> tuple[str, ...]:
     return tuple(PART_SUFFIX.sub("", story.title).rsplit(" (", 1)[0] for story in stories)
 
 
-def select(index: Index, question: str, embedder: Embedder | None = None, focus: str = "") -> Selection:
-    """Waehlt die Eintraege zur Frage aus. ``focus`` ist die Story der vorigen Antwort."""
+def _from_documents(
+    index: Index, question: str, titles: list[str], embedder: Embedder | None, budget: int
+) -> Selection:
+    """Die genannten Dokumente der Reihe nach; reicht der Platz nicht, die zur Frage passendsten Abschnitte."""
+    entries: list[Passage] = []
+    notes: list[str] = []
+    outline: tuple[str, ...] = ()
+    for title in titles:
+        sections = index.document(title)
+        ranked = [
+            hit.passage
+            for hit in index.search(question, len(sections), kinds=(DOCUMENT,), embedder=embedder, feature=title)
+        ]
+        seen = {passage.ref for passage in ranked}
+        ranked += [passage for passage in sections if passage.ref not in seen]
+        taken = _budgeted(ranked, budget // len(titles))
+        order = {passage.ref: number for number, passage in enumerate(sections)}
+        entries += sorted(taken, key=lambda passage: order.get(passage.ref, 0))
+        notes.append(f"„{title}“" + ("" if len(taken) == len(sections) else f", {len(taken)} von {len(sections)} Abschnitten"))
+        if len(titles) == 1 and len(taken) < len(sections):
+            # Was fehlt, soll das Modell wenigstens dem Titel nach kennen.
+            prefix = f"{title}: "
+            names = [PART_SUFFIX.sub("", passage.title) for passage in sections]
+            outline = tuple(dict.fromkeys(name[len(prefix) :] if name.startswith(prefix) else name for name in names))
+    how = ("Dokument " if len(titles) == 1 else "Dokumente ") + "; ".join(notes)
+    return Selection(tuple(entries), "", outline, how, DOCUMENT_FOCUS + titles[0], documents=tuple(titles))
+
+
+def select(
+    index: Index, question: str, embedder: Embedder | None = None, focus: str = "", budget: int = ENTRY_BUDGET
+) -> Selection:
+    """Waehlt die Eintraege zur Frage aus. ``focus`` ist die Story der vorigen Antwort.
+
+    ``budget`` gilt fuer ein genanntes Dokument: so viele Zeichen davon bekommt das Modell.
+    """
     features = index.features()
-    # Auch ein Dokument (Protokoll, Recap) kann genannt sein; dann sucht die Frage dort zuerst.
-    feature = named_feature(question, features + index.documents())
+    feature = named_feature(question, features)
+    named, question_text = named_documents(question, index.document_sources())
+    if focus.startswith(DOCUMENT_FOCUS):
+        # Anschlussfrage zu einem Dokument: Es bleibt bei diesem.
+        last = focus[len(DOCUMENT_FOCUS) :]
+        if not named and not feature and not search.story_keys(question) and is_follow_up(question):
+            named = [last] if index.document(last) else []
+        focus = ""
     keys = search.story_keys(question)
     position, anchor = position_asked(question)
     focused = index.parts(focus) if focus else []
@@ -251,7 +367,12 @@ def select(index: Index, question: str, embedder: Embedder | None = None, focus:
                 (first.group or first.ref) if first else "",
             )
 
-    # 3. Anschlussfrage: Es bleibt bei der Story der vorigen Antwort.
+    # 3. Genanntes Dokument: der Reihe nach, so weit der Platz reicht.
+    if named and not feature:
+        return _from_documents(index, question_text, named, embedder, budget)
+    question = question_text
+
+    # 4. Anschlussfrage: Es bleibt bei der Story der vorigen Antwort.
     overview = bool(OVERVIEW_WORDS.search(question.lower()))
     if focused and not feature and not overview and is_follow_up(question):
         feature = focused[0].feature
@@ -263,7 +384,7 @@ def select(index: Index, question: str, embedder: Embedder | None = None, focus:
             focus,
         )
 
-    # 4. Suche, in einem genannten Feature zuerst dort.
+    # 5. Suche, in einem genannten Feature zuerst dort.
     if not feature and overview:
         feature = focused[0].feature if focused else (features[0] if len(features) == 1 else "")
         if not feature and features:
@@ -318,6 +439,11 @@ def outline_text(selection: Selection) -> str:
     if not selection.outline:
         return ""
     lines = [f"{number}. {name}" for number, name in enumerate(selection.outline, start=1)]
+    if selection.documents:
+        return (
+            f"Gliederung des Dokuments „{selection.documents[0]}“ ({len(lines)} Abschnitte, in dieser "
+            "Reihenfolge; nicht alle stehen unten als Eintrag):\n" + "\n".join(lines)
+        )
     if not selection.feature:
         return f"Features im Bestand ({len(lines)}):\n" + "\n".join(lines)
     return f"Gliederung des Features „{selection.feature}“ ({len(lines)} Stories, in dieser Reihenfolge):\n" + "\n".join(lines)
@@ -346,11 +472,20 @@ ask_agent = Agent(deps_type=AskDeps, model_settings=MODEL_SETTINGS, retries=3)
 def instructions(ctx: RunContext[AskDeps]) -> str:
     deps = ctx.deps
     text = (
-        "Du beantwortest Fragen zu den User Stories und Aufgaben eines Projekts. Regeln:\n"
+        "Du beantwortest Fragen zu den User Stories, Aufgaben und Dokumenten eines Projekts. Regeln:\n"
         "- Antworte auf Deutsch und nur mit dem, was in den Einträgen und der Gliederung "
         "unten steht. Kein Wissen von außerhalb, keine Vermutungen.\n"
         "- Beantworten die Einträge die Frage nicht oder nur zum Teil, sage das in einem "
         "Satz und nenne, was dazu dort steht. Rate nicht.\n"
+        "- Fehlt nur das Wort der Frage in den Einträgen (etwa „Methodik“, „Ansatz“, "
+        "„Strategie“), ist die Frage damit nicht unbeantwortet: Beschreibe, was die "
+        "Einträge der Sache nach dazu sagen.\n"
+        "- Einordnung: Fragt die Frage nach einem Verfahren, Ansatz, Modell oder Konzept, "
+        "und beschreiben die Einträge erkennbar ein bekanntes, ohne es beim Namen zu "
+        "nennen, hänge als letzte Zeile an: „Einordnung: <Name>, erkennbar an <woran>.“ "
+        "Nur in dieser Zeile darfst du Wissen von außerhalb verwenden, und nur, wenn du dir "
+        "sicher bist; sonst lass sie weg. Sie liefert nie fehlende Tatsachen zum Projekt "
+        "(Termine, Personen, Beschlüsse, Stände, Zahlen).\n"
         "- Halte dich an die verlangte Form (etwa „in einem Satz“, „als Liste“). Ohne "
         "Vorgabe: höchstens fünf Sätze oder eine kurze Liste.\n"
         "- Nenne Stories mit ihrem Kürzel, wenn sie eines haben.\n"
@@ -410,6 +545,8 @@ def checked(ctx: RunContext[AskDeps], answer: str) -> str:
     # Ebenso geschuetzte und schmale Leerzeichen, etwa zwischen Zahl und Einheit ("30 Tage").
     answer = re.sub("[\u00a0\u2007\u2009\u202f]", " ", answer)
     answer = "\n".join(line.rstrip() for line in answer.strip().splitlines())
+    # Die Einordnung stammt nicht aus den Unterlagen; das steht immer dabei, gleich wie das Modell sie schreibt.
+    answer = CLASSIFICATION.sub(CLASSIFICATION_LABEL, answer)
     found = problems(answer, ctx.deps)
     if found:
         raise ModelRetry(
@@ -430,6 +567,8 @@ def source_line(selection: Selection) -> str:
     titles = selection.titles()
     if not titles and not selection.outline:
         return ""
+    if selection.documents:
+        return f"Grundlage ({selection.how})"
     names = "; ".join(title.rsplit(" (", 1)[0] for title in titles) or "nur die Gliederung"
     return f"Grundlage ({selection.how}): {names}"
 
@@ -445,6 +584,7 @@ class Conversation:
         store: Store | None = None,
         mirror: Mirror | None = None,
         now: Callable[[], datetime] = lambda: datetime.now().astimezone(),
+        budget: int = ENTRY_BUDGET,
     ) -> None:
         self.index = index
         self.model = model
@@ -452,6 +592,7 @@ class Conversation:
         self.store = store
         self.mirror = mirror  # Asana-Spiegel fuer Listenfragen; None = keiner
         self.now = now
+        self.budget = budget  # Zeichen eines genannten Dokuments, die das Modell bekommt
         self.history: list[tuple[str, str]] = []
         self.focus = ""
         self.last: Answer | None = None
@@ -471,9 +612,9 @@ class Conversation:
             self.last = answer
             return answer
         try:
-            selection = select(self.index, question, self.embedder, self.focus)
+            selection = select(self.index, question, self.embedder, self.focus, self.budget)
         except search.EmbeddingError:
-            selection = select(self.index, question, None, self.focus)  # ohne Bedeutungssuche weiter
+            selection = select(self.index, question, None, self.focus, self.budget)  # ohne Bedeutungssuche weiter
         if not selection.entries and not selection.outline:
             answer = Answer(NOTHING_FOUND, CODE, selection)
         else:
@@ -548,7 +689,14 @@ def main(argv: list[str]) -> int:
         if not sum(index.counts().values()):
             print("Der Index ist leer: Im Profil hat kein Kontext ein stories_dir mit Story-Dateien.", file=sys.stderr)
             return 1
-        conversation = Conversation(index, ollama_model(profile.model_for(AGENT_NAME)), embedder, store, mirror)
+        name = profile.model_for(AGENT_NAME)
+        try:
+            large = (fixed_context(name or MODEL_NAME) or 0) >= LARGE_CONTEXT
+        except OllamaError:
+            large = False
+        conversation = Conversation(
+            index, ollama_model(name), embedder, store, mirror, budget=LARGE_BUDGET if large else ENTRY_BUDGET
+        )
         if args:
             print(answer_lines(conversation.ask(args[0])))
         else:
