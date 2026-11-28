@@ -1044,8 +1044,8 @@ def aktion_task(model: object) -> Callable[[AktionInputs], AktionOutput]:
                     item.name,
                     item.erledigt,
                     item.faellig.isoformat() if item.faellig else "",
-                    by_name.get(item.abschnitt, ""),
-                    item.abschnitt if item.abschnitt in by_name else "",
+                    section_gid=by_name.get(item.abschnitt, ""),
+                    section=item.abschnitt if item.abschnitt in by_name else "",
                 )
                 for number, item in enumerate(inputs.aufgaben)
             ),
@@ -1062,6 +1062,10 @@ def aktion_task(model: object) -> Callable[[AktionInputs], AktionOutput]:
         if last is not None:
             wish = asana_actions.refer_to_last(inputs.satz, wish, state, _LastAction(last.gid, state.gid))
         try:
+            if wish.aktion == asana_actions.ATTACH:
+                # Welche Dateien passen, misst diese Messung nicht; nur ob Aktion und Aufgabe stimmen.
+                task = asana_actions.find_task(wish.aufgabe, [task for task in state.tasks if not task.completed])
+                return AktionOutput(aktion=wish.aktion, aufgabe=task.name, modell=said)
             plan = asana_actions.make_plan(wish, state, inputs.heute)
         except asana_actions.Clarify as exc:
             return AktionOutput(rueckfrage=str(exc), modell=said)

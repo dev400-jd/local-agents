@@ -113,3 +113,15 @@ cases:
   inputs: {satz: "Schreib die Beschreibung für Folien bauen aus dem Workshop-Recap", heute: *heute, aufgaben: *aufgaben}
   evaluators:
   - Aktion: {rueckfrage: "Für eine Beschreibung brauche ich den Suchindex"}
+- name: "Anhänge: passende Dateien an eine genannte Aufgabe"
+  inputs: {satz: "Häng die passenden Dateien an Folien bauen an", heute: *heute, aufgaben: *aufgaben}
+  evaluators:
+  - Aktion: {aktion: anhaenge, aufgabe: "Folien bauen"}
+- name: "Anhänge: Verweis auf die Aufgabe von eben"
+  inputs: {satz: "Such die Unterlagen zur eben angelegten Aufgabe heraus, sie braucht noch Anhänge", heute: *heute, aufgaben: *aufgaben, letzte: "Angebot prüfen"}
+  evaluators:
+  - Aktion: {aktion: anhaenge, aufgabe: "Angebot prüfen"}
+- name: "Anhänge sind keine Beschreibung und kein Kommentar"
+  inputs: {satz: "Füge Angebot prüfen die zugehörigen Dokumente als Anhang hinzu", heute: *heute, aufgaben: *aufgaben}
+  evaluators:
+  - Aktion: {aktion: anhaenge, aufgabe: "Angebot prüfen"}

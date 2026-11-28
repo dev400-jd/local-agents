@@ -32,6 +32,10 @@ Dazu "Beschreibung setzen": Der Agent sucht im Vault das passende Dokument
 (Protokoll, Recap) und laesst daraus eine Beschreibung fuer die Aufgabe
 entwerfen (asana_describe.py). Du siehst den ganzen Text vor der Freigabe.
 
+Dazu "Anhaenge": Der Agent sucht in den Dokumentordnern die Dateien, die zu
+Name und Beschreibung der Aufgabe passen (asana_attach.py), und haengt die von
+dir gewaehlten als Link auf SharePoint an. Hochgeladen wird nichts.
+
 Was es nicht gibt: Kommentare, Zuweisungen an andere, Loeschen (ausser beim
 Zuruecknehmen einer eben angelegten Aufgabe), Aenderungen ausserhalb der
 erlaubten Projekte, mehrere Aktionen in einem Satz.
@@ -41,6 +45,7 @@ import json
 import re
 import sqlite3
 import sys
+import uuid
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -54,8 +59,9 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-from local_agents import asana_describe, asana_mirror
+from local_agents import asana_attach, asana_describe, asana_mirror
 from local_agents.agent import MODEL_NAME, MODEL_SETTINGS, ollama_model, structured
+from local_agents.asana_attach import Candidate, Finder, NoAttachments
 from local_agents.asana_describe import Drafter, NoDescription
 from local_agents.asana_source import API_URL, AsanaAccessError, Transport, _explain, asana_token, http_transport
 from local_agents.asana_tasks import _day, _one_day
@@ -66,6 +72,7 @@ from local_agents.store import db_path
 AGENT_NAME = "asana_aktion"
 NEW_SECTION = "abschnitt_anlegen"
 DESCRIBE = "beschreibung"
+ATTACH = "anhaenge"
 CREATE, COMPLETE, REOPEN, DUE, SECTION, RENAME, SUBTASK, UNCLEAR = (
     "anlegen",
     "abschliessen",
@@ -86,6 +93,7 @@ LABELS = {
     SUBTASK: "Unteraufgabe anlegen",
     NEW_SECTION: "Abschnitt anlegen",
     DESCRIBE: "Beschreibung setzen",
+    ATTACH: "Dateien als Link anhängen",
 }
 # Eine Zeitangabe am Ende eines Titels ("Folien bauen bis Freitag"): Sie gehoert zur Faelligkeit.
 _DAY = r"(?:heute|morgen|übermorgen|montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag|\d{1,2}\.\s?\d{1,2}\.(?:\d{4})?)"
@@ -134,6 +142,7 @@ class Wish(BaseModel):
         "unteraufgabe",
         "abschnitt_anlegen",
         "beschreibung",
+        "anhaenge",
         "unklar",
     ] = Field(description="Die eine Aktion. „unklar“, wenn der Satz keine dieser Aktionen verlangt oder mehrere.")
     aufgabe: str = Field(
@@ -179,6 +188,9 @@ def instructions(ctx: RunContext[WishDeps]) -> str:
         "(„schreib die Beschreibung für … aus dem Recap“, „beschreibe … anhand des Protokolls“, „fülle die "
         "Beschreibung von … aus“). aufgabe ist die Aufgabe, quelle das genannte Dokument. Du schreibst die "
         "Beschreibung nicht selbst; titel bleibt leer. Ein Kommentar ist keine Beschreibung.\n"
+        "- anhaenge: passende Dateien an eine vorhandene Aufgabe anhängen („häng die passenden Dateien "
+        "an … an“, „füge … Anhänge hinzu“, „such die Unterlagen zu … und häng sie an“). aufgabe ist die "
+        "Aufgabe; alles andere bleibt leer. Du wählst keine Dateien aus; das macht der Code.\n"
         "- umbenennen: titel ist der neue Name, aufgabe der bisherige.\n"
         "- unteraufgabe: aufgabe ist die übergeordnete Aufgabe, titel die neue Unteraufgabe.\n"
         "- Nennt der Satz die Aufgabe nicht beim Namen, sondern verweist auf sie („den eben angelegten Task“, "
@@ -447,10 +459,13 @@ def make_plan(wish: Wish, state: ProjectState, today: date) -> Plan:
         raise Clarify(
             "Das kann ich nicht ausführen. Möglich ist je Satz eine Aktion: Aufgabe anlegen, abschließen, "
             "wieder öffnen, Fälligkeit setzen oder entfernen, in einen Abschnitt verschieben, umbenennen, "
-            "Unteraufgabe anlegen, Abschnitt anlegen, Beschreibung aus einem Dokument schreiben."
+            "Unteraufgabe anlegen, Abschnitt anlegen, Beschreibung aus einem Dokument schreiben, "
+            "passende Dateien als Link anhängen."
         )
     if action == DESCRIBE:
         raise Clarify("Für eine Beschreibung brauche ich den Suchindex; das geht nur über den Befehl selbst.")
+    if action == ATTACH:
+        raise Clarify("Für Anhänge brauche ich den Suchindex; das geht nur über den Befehl selbst.")
     if action == NEW_SECTION:
         name = _title(wish.abschnitt or wish.titel)
         same = [section for _, section in state.sections if section.casefold() == name.casefold()]
@@ -629,7 +644,17 @@ def check_allowed(request: Request, state: ProjectState, created: set[str]) -> N
     elif method == "POST" and path == f"/projects/{state.gid}/sections":
         if set(data) == {"name"} and data["name"]:
             return
-    elif method == "DELETE" and len(parts) == 2 and parts[0] in ("tasks", "sections"):
+    elif method == "POST" and path == "/attachments":
+        # Nur Links auf SharePoint an eine Aufgabe des Projekts; hochgeladen wird nie.
+        if (
+            set(data) == {"parent", "resource_subtype", "name", "url"}
+            and data["parent"] in known
+            and data["resource_subtype"] == "external"
+            and data["name"]
+            and asana_attach.is_allowed_url(str(data["url"]))
+        ):
+            return
+    elif method == "DELETE" and len(parts) == 2 and parts[0] in ("tasks", "sections", "attachments"):
         if parts[1] in created and not data:  # nur, was der Agent selbst angelegt hat
             return
     raise Refused(f"Anfrage außerhalb der Grenzen: {method} {path}")
@@ -640,11 +665,20 @@ def http_writer(token: str) -> Writer:
 
     def send(method: str, path: str, data: dict) -> dict:
         body = None if method == "DELETE" else json.dumps({"data": data}).encode()
+        content_type = "application/json"
+        if method == "POST" and path == "/attachments":
+            # Anhaenge nimmt Asana nur als Formular; hier stehen darin nur Textfelder (ein Link, keine Datei).
+            boundary = uuid.uuid4().hex
+            body = b"".join(
+                f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n{value}\r\n'.encode()
+                for key, value in data.items()
+            ) + f"--{boundary}--\r\n".encode()
+            content_type = f"multipart/form-data; boundary={boundary}"
         request = urllib.request.Request(
             f"{API_URL}{path}",
             data=body,
             method=method,
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            headers={"Authorization": f"Bearer {token}", "Content-Type": content_type},
         )
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
@@ -708,6 +742,59 @@ def execute(plan: Plan, state: ProjectState, writer: Writer, transport: Transpor
     return Outcome(True, ["Erledigt und kontrolliert."], checked, undo)
 
 
+# --- Anhaenge
+
+
+ATTACHMENT_FIELDS = "name,view_url,resource_subtype"
+
+
+def _attachments(task: str, transport: Transport) -> list[dict]:
+    return asana_mirror._pages(transport, f"/tasks/{task}/attachments", {"opt_fields": ATTACHMENT_FIELDS})
+
+
+def offer_attachments(
+    wish: Wish, state: ProjectState, finder: Finder, transport: Transport, journal: "Journal"
+) -> tuple[LiveTask, list[Candidate]]:
+    """Die Aufgabe und die Dateien, die zu ihr passen und noch nicht anhaengen. Wirft ``Clarify``."""
+    task = find_task(wish.aufgabe, [task for task in state.tasks if not task.completed])
+    try:
+        candidates = finder(task.name, task.notes, journal.described_from(task.gid))
+    except NoAttachments as exc:
+        raise Clarify(str(exc)) from exc
+    present = _attachments(task.gid, transport)
+    names = {(attachment.get("name") or "").casefold() for attachment in present}
+    urls = {attachment.get("view_url") or "" for attachment in present}
+    fresh = [c for c in candidates if c.name.casefold() not in names and c.url not in urls]
+    if not fresh:
+        raise Clarify(f"Die passenden Dateien hängen schon an „{task.name}“.")
+    return task, fresh
+
+
+def attach(
+    task: LiveTask, picked: list[Candidate], state: ProjectState, writer: Writer, transport: Transport
+) -> tuple[Plan, Outcome]:
+    """Haengt die gewaehlten Dateien als Link an und liest die Anhaenge zurueck."""
+    requests = tuple(
+        Request("POST", "/attachments", {"parent": task.gid, "resource_subtype": "external", "name": c.name, "url": c.url})
+        for c in picked
+    )
+    plan = Plan(ATTACH, task.name, tuple(("Anhang", "", c.name) for c in picked), requests, (), task.gid)
+    made: list[str] = []
+    for request in requests:
+        check_allowed(request, state, set())
+        gid = (writer(request.method, request.path, request.data).get("data") or {}).get("gid") or ""
+        if not gid:
+            break
+        made.append(gid)
+    undo = tuple(Request("DELETE", f"/attachments/{gid}", {}) for gid in made)
+    present = {attachment["gid"] for attachment in _attachments(task.gid, transport)}
+    if len(made) < len(requests) or not set(made) <= present:
+        return plan, Outcome(
+            False, [f"Nur {len(set(made) & present)} von {len(requests)} Anhängen stehen an der Aufgabe; bitte in Asana nachsehen."], task.gid, undo
+        )
+    return plan, Outcome(True, ["Erledigt und kontrolliert."], task.gid, undo)
+
+
 # --- Protokoll
 
 
@@ -755,6 +842,15 @@ class Journal:
         return self.db.execute(
             f"SELECT * FROM asana_journal WHERE undone_at = ''{where} ORDER BY id DESC LIMIT 1", args
         ).fetchone()
+
+    def described_from(self, task_gid: str) -> str:
+        """Titel des Dokuments, aus dem der Agent die Beschreibung dieser Aufgabe zuletzt geschrieben hat; sonst leer."""
+        row = self.db.execute(
+            "SELECT changes FROM asana_journal WHERE action = ? AND task_gid = ? AND undone_at = '' ORDER BY id DESC LIMIT 1",
+            (DESCRIBE, task_gid),
+        ).fetchone()
+        match = re.search(r"aus „(.+)“$", json.loads(row["changes"])[0][2]) if row else None
+        return match.group(1) if match else ""
 
     def mark_undone(self, entry: int, now: datetime) -> None:
         with self.db:
@@ -910,8 +1006,10 @@ def act(
     confirm: Callable[[str], str] | None,
     out: Callable[[str], None] = print,
     drafter: Drafter | None = None,
+    finder: Finder | None = None,
 ) -> str:
-    """Ein Satz, eine Aktion. ``drafter`` entwirft Beschreibungen aus Dokumenten; ohne ihn gibt es die Aktion nicht.
+    """Ein Satz, eine Aktion. ``drafter`` entwirft Beschreibungen aus Dokumenten, ``finder`` sucht Dateien
+    fuer Anhaenge; ohne sie gibt es die jeweilige Aktion nicht.
 
     Gibt zurueck: "ausgefuehrt", "abgebrochen", "rueckfrage", "nicht_freigegeben" oder "fehler".
 
@@ -922,29 +1020,52 @@ def act(
         refuse_by_wording(sentence)
         wish = named_section(sentence, interpret(sentence, state, model), state)
         wish = refer_to_last(sentence, named_task(sentence, wish, state), state, journal)
-        if wish.aktion == DESCRIBE and drafter is not None:
+        offer: tuple[LiveTask, list[Candidate]] | None = None
+        if wish.aktion == ATTACH and finder is not None:
+            offer = offer_attachments(wish, state, finder, transport, journal)
+        elif wish.aktion == DESCRIBE and drafter is not None:
             plan = plan_description(wish, state, drafter)
         else:
             plan = make_plan(wish, state, now.astimezone().date())
     except Clarify as exc:
         out(str(exc))
         return "rueckfrage"
-    out("\n".join(plan.lines(state.name)))
-    if confirm is None:
-        out("Nicht ausgeführt: Ohne Terminal gibt es keine Freigabe.")
-        return "nicht_freigegeben"
-    try:
-        answer = confirm("Ausführen? (j/n) ").strip().casefold()
-    except EOFError:
-        answer = ""
-    if answer not in ("j", "ja"):
-        out("Abgebrochen, nichts geändert.")
-        return "abgebrochen"
-    outcome = execute(plan, state, writer, transport)
+    if offer is not None:
+        task, candidates = offer
+        out(f"{LABELS[ATTACH]} im Projekt „{state.name}“: {task.name}")
+        out("\n".join(asana_attach.offer_lines(candidates)))
+        out("  Angehängt wird der Link; die Datei bleibt in SharePoint.")
+        if confirm is None:
+            out("Nicht ausgeführt: Ohne Terminal gibt es keine Freigabe.")
+            return "nicht_freigegeben"
+        try:
+            answer = confirm("Welche anhängen? (Nummern wie 1,3 · alle · n) ")
+        except EOFError:
+            answer = ""
+        numbers = asana_attach.chosen(answer, len(candidates))
+        if not numbers:
+            out("Abgebrochen, nichts geändert." if numbers == [] else "Das habe ich nicht verstanden; nichts geändert.")
+            return "abgebrochen"
+        plan, outcome = attach(task, [candidates[number] for number in numbers], state, writer, transport)
+    else:
+        out("\n".join(plan.lines(state.name)))
+        if confirm is None:
+            out("Nicht ausgeführt: Ohne Terminal gibt es keine Freigabe.")
+            return "nicht_freigegeben"
+        try:
+            answer = confirm("Ausführen? (j/n) ").strip().casefold()
+        except EOFError:
+            answer = ""
+        if answer not in ("j", "ja"):
+            out("Abgebrochen, nichts geändert.")
+            return "abgebrochen"
+        outcome = execute(plan, state, writer, transport)
     journal.add(now, state, plan, outcome)
     out("\n".join(outcome.lines))
     if outcome.ok:
         out("Zurücknehmen: python -m local_agents.asana_actions rueckgaengig")
+        if plan.action == DESCRIBE and finder is not None and profile.document_folders:
+            out('Passende Dateien anhängen: python -m local_agents.asana_actions "Häng die passenden Dateien an die eben geänderte Aufgabe an"')
     return "ausgefuehrt" if outcome.ok else "fehler"
 
 
@@ -978,6 +1099,8 @@ def undo_last(
     what = "Der vorherige Stand wird wiederhergestellt"
     if deleting:
         what = "Der angelegte Abschnitt wird gelöscht" if entry["action"] == NEW_SECTION else "Die angelegte Aufgabe wird gelöscht"
+    if entry["action"] == ATTACH:
+        what = "Die angehängten Links werden von der Aufgabe entfernt; die Dateien in SharePoint bleiben"
     out(f"Zurücknehmen: {LABELS[entry['action']]}: {entry['title']}\n  {what}.")
     if confirm is None:
         out("Nicht ausgeführt: Ohne Terminal gibt es keine Freigabe.")
@@ -990,6 +1113,8 @@ def undo_last(
         out("Abgebrochen, nichts geändert.")
         return "abgebrochen"
     created = {entry["task_gid"]} if entry["created"] else set()
+    if entry["action"] == ATTACH:
+        created = {request.path.rsplit("/", 1)[-1] for request in requests if request.path.startswith("/attachments/")}
     for request in requests:
         check_allowed(request, state, created)
         writer(request.method, request.path, request.data)
@@ -1030,6 +1155,31 @@ def description_drafter(profile: Profile):
             resource.close()
 
 
+@contextmanager
+def attachment_finder(profile: Profile):
+    """Die Suche nach Dateien fuer Anhaenge, mit frisch abgeglichenem Suchindex; geoeffnet erst bei Bedarf."""
+    opened: list = []
+
+    def finder(task: str, notes: str, preferred: str) -> list[Candidate]:
+        from local_agents import search
+        from local_agents.store import Store
+
+        store, index = Store(), search.Index()
+        opened.extend((store, index))
+        search.refresh(index, profile, store)
+        embedder = search.prepare_meaning(index, profile)
+        try:
+            return asana_attach.find(index, profile, task, notes, embedder, preferred)
+        except search.EmbeddingError:
+            return asana_attach.find(index, profile, task, notes, None, preferred)
+
+    try:
+        yield finder
+    finally:
+        for resource in opened:
+            resource.close()
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         print(__doc__, file=sys.stderr)
@@ -1053,8 +1203,10 @@ def main(argv: list[str]) -> int:
                 result = undo_last(profile, transport, writer, journal, now, confirm)
             else:
                 model = ollama_model(profile.model_for(AGENT_NAME))
-                with description_drafter(profile) as drafter:
-                    result = act(argv[1], profile, model, transport, writer, journal, now, confirm, drafter=drafter)
+                with description_drafter(profile) as drafter, attachment_finder(profile) as finder:
+                    result = act(
+                        argv[1], profile, model, transport, writer, journal, now, confirm, drafter=drafter, finder=finder
+                    )
         except AsanaAccessError as exc:
             print(exc, file=sys.stderr)
             return 1

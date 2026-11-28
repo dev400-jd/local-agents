@@ -1200,6 +1200,7 @@ Arbeitgebers erlaubt ist, musst du selbst klären.
 | Unteraufgabe anlegen, dir zugewiesen | „Füge bei … die Unteraufgabe … hinzu" |
 | Abschnitt im Projekt anlegen | „Leg den Abschnitt … an" |
 | Beschreibung aus einem Dokument des Vaults schreiben | „Schreib die Beschreibung für … aus dem Workshop-Recap" |
+| Passende Dateien als Link auf SharePoint anhängen | „Häng die passenden Dateien an … an" |
 
 Statt des Namens geht auch ein Verweis auf die Aufgabe der letzten Aktion:
 „den eben angelegten Task", „die Aufgabe von gerade", „die letzte Aufgabe".
@@ -1319,6 +1320,52 @@ Grenzen:
   anderes verändert hat.
 
 Anderes Modell: `asana_aktion = "…"` unter `[models]` im Profil.
+
+### Anhänge aus dem Dokumentordner
+
+Zu einer Aufgabe sucht der Agent die Dateien heraus, die zu ihr gehören, und
+hängt die von dir gewählten an – als Link auf SharePoint, nicht als Kopie.
+
+```text
+$ python -m local_agents.asana_actions "Häng die passenden Dateien an die eben angelegte Aufgabe an"
+Dateien als Link anhängen im Projekt „Übungsprojekt“: Schulung Lieferketten
+  1. Ablage/Schulungen/Folien Lieferketten.pptx (2,4 MB) · passt auf: daraus stammt die Beschreibung
+     https://firma.sharepoint.com/…/Schulungen/Folien%20Lieferketten.pptx?web=1
+  2. Ablage/Konzept Lager.docx (310 KB) · passt auf: Ziel
+     https://firma.sharepoint.com/…/Konzept%20Lager.docx?web=1
+  Angehängt wird der Link; die Datei bleibt in SharePoint.
+Welche anhängen? (Nummern wie 1,3 · alle · n)
+```
+
+1. **Finden (Code, kein Modell):** Die [Suche](#suche) läuft zweimal über die
+   Dateien der [Dokumentordner](#dokumentordner-sharepoint-und-onedrive): mit
+   dem Namen der Aufgabe (zählt doppelt) und mit ihrer Beschreibung. Je Datei
+   zählt ihr bester Abschnitt; angeboten werden höchstens fünf Dateien. Hat
+   der Agent die Beschreibung selbst aus einem Dokument geschrieben, steht
+   dieses Dokument vorn. Was schon an der Aufgabe hängt, wird nicht noch
+   einmal angeboten.
+2. **Link (Code):** Die Adresse in SharePoint setzt der Code aus den
+   Einstellungen des OneDrive-Programms zusammen
+   (`~/Library/Application Support/OneDrive/settings/Business1/`): Adresse der
+   Bibliothek, Pfad des abgeglichenen Ordners, Pfad der Datei. Die
+   Einstellungen werden nur gelesen. Ihr Format ist nicht dokumentiert; findet
+   der Code dort keine Zuordnung, bietet er nichts an und sagt das.
+3. **Auswahl:** Du nennst die Nummern, `alle` oder `n`. Ohne Auswahl wird
+   nichts angehängt. Die Adresse steht dabei, damit du sie vorher öffnen
+   kannst.
+4. **Anhängen und Kontrolle:** Die Grenzkontrolle lässt nur Link-Anhänge mit
+   einer `https`-Adresse auf `sharepoint.com` an Aufgaben des freigegebenen
+   Projekts zu; ein Hochladen von Dateien ist nicht im Katalog. Danach liest
+   der Code die Anhänge der Aufgabe zurück. `rueckgaengig` entfernt die
+   angehängten Links wieder; die Dateien in SharePoint bleiben.
+
+Nach „Beschreibung setzen" nennt der Agent den Satz für die Anhänge, wenn es
+Dokumentordner gibt. Von selbst hängt er nie etwas an.
+
+Der Link folgt den Rechten in SharePoint: Wer die Datei dort nicht sehen darf,
+kommt über Asana auch nicht hinein. Sichtbar werden in Asana aber Dateiname
+und Pfad. Dokumente außerhalb der Dokumentordner (etwa ein Recap im Vault)
+haben keine SharePoint-Adresse und werden nicht angeboten.
 
 ## Gesprächs-Agent
 
