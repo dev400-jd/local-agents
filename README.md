@@ -1956,6 +1956,32 @@ eine Antwort auswertet oder der Status-Agent eine Nachricht-Aufgabe nennt.
 
 ## Messen
 
+### Zwei Ollama-Modelle quantitativ vergleichen
+
+Der gepaarte Vergleich testet dieselben Fälle mit beiden Modellen. Der Bericht
+zeigt pro Disziplin bestandene Versuche, Laufzeit und die Differenz in
+Prozentpunkten. Rohdaten und Einzelbewertungen bleiben für eine Fehleranalyse
+erhalten. Der erste Vergleich verwendet drei zufällig gezogene Fälle pro
+Disziplin und zwei Versuche je Modell und Fall.
+
+```sh
+.venv/bin/python -m local_agents.research gpt-oss:20b deepseek-r1:14b --out research/mein-vergleich --cases 3 --repeats 2
+.venv/bin/python -m local_agents.research_report research/mein-vergleich
+```
+
+Die erste Zeile führt die Agenten lokal gegen Ollama aus. Nach einer Unterbrechung
+setzt derselbe Befehl am ersten fehlenden Versuch an. Die zweite Zeile liest die
+gespeicherten Ergebnisse offline. Modellnamen lassen sich durch andere installierte
+Tags aus `ollama list` ersetzen. Für einen neuen Vergleich ein neues
+Ausgabeverzeichnis wählen. Ohne `--cases` laufen alle versionierten Fälle der
+gewählten Disziplinen, standardmäßig dreimal. Mit `--agent status termin` lässt
+sich die Fragestellung auf diese zwei Agenten beschränken. Es gelten die unten
+beschriebenen Installationsvoraussetzungen für die Evals.
+
+[Gemessener Vergleich auf dem M4 Pro](research/vergleich-01/bericht.md) ·
+[Versuchsdesign, Interpretation und Fehleranalyse](docs/modellvergleich.md)
+
+
 Die Tests unter `tests/` prüfen den Code mit einem geskripteten Modell. Ob das
 echte lokale Modell richtig antwortet, misst `evals.py`: Es lässt einen Agenten
 gegen feste Fälle laufen, bei denen die richtige Antwort bekannt ist. Weil das
